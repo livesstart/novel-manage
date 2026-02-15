@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pip install:*)",
+      "Bash(python app.py:*)",
+      "Bash(python -c:*)",
+      "Bash(python:*)",
+      "Bash(sqlite3:*)",
+      "Bash(findstr:*)",
+      "Bash(git -C:*)",
+      "Bash(git init:*)",
+      "Bash(git add:*)"
+    ]
+  }
+}

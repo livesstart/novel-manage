@@ -1,0 +1,718 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>本地小说管理器</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+<body>
+    <div class="app-container">
+        <!-- 侧边栏 -->
+        <aside class="sidebar">
+            <div class="logo">
+                <i class="fas fa-book-open"></i>
+                <span>小说管理器</span>
+            </div>
+
+            <nav class="nav-menu">
+                <a href="#" class="nav-item active" data-view="novels">
+                    <i class="fas fa-book"></i>
+                    <span>小说列表</span>
+                </a>
+                <a href="#" class="nav-item" data-view="categories">
+                    <i class="fas fa-folder"></i>
+                    <span>分类管理</span>
+                </a>
+                <a href="#" class="nav-item" data-view="tags">
+                    <i class="fas fa-tags"></i>
+                    <span>标签管理</span>
+                </a>
+                <a href="#" class="nav-item" data-view="crawler">
+                    <i class="fas fa-spider"></i>
+                    <span>爬虫管理</span>
+                </a>
+                <a href="#" class="nav-item" data-view="ai-config">
+                    <i class="fas fa-robot"></i>
+                    <span>AI 配置</span>
+                </a>
+            </nav>
+
+            <div class="sidebar-stats">
+                <div class="stat-item">
+                    <span class="stat-value" id="stat-total">0</span>
+                    <span class="stat-label">总小说</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-value" id="stat-finished">0</span>
+                    <span class="stat-label">已读完</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-value" id="stat-categories">0</span>
+                    <span class="stat-label">分类</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-value" id="stat-tags">0</span>
+                    <span class="stat-label">标签</span>
+                </div>
+            </div>
+        </aside>
+
+        <!-- 主内容区 -->
+        <main class="main-content">
+            <!-- 顶部栏 -->
+            <header class="header">
+                <div class="search-box">
+                    <i class="fas fa-search"></i>
+                    <input type="text" id="search-input" placeholder="搜索小说名称或作者...">
+                </div>
+                <div class="header-actions">
+                    <button class="btn btn-secondary" id="btn-batch-import">
+                        <i class="fas fa-folder-plus"></i>
+                        批量导入
+                    </button>
+                    <button class="btn btn-primary" id="btn-add-novel">
+                        <i class="fas fa-plus"></i>
+                        添加小说
+                    </button>
+                </div>
+            </header>
+
+            <!-- 筛选栏 -->
+            <div class="filter-bar">
+                <div class="filter-group">
+                    <label>分类:</label>
+                    <select id="filter-category">
+                        <option value="">全部</option>
+                    </select>
+                </div>
+                <div class="filter-group">
+                    <label>标签:</label>
+                    <div class="filter-tags" id="filter-tags">
+                        <!-- 动态加载 -->
+                    </div>
+                </div>
+                <div class="filter-group">
+                    <label>状态:</label>
+                    <select id="filter-status">
+                        <option value="">全部</option>
+                        <option value="0">未读</option>
+                        <option value="1">阅读中</option>
+                        <option value="2">已读完</option>
+                    </select>
+                </div>
+            </div>
+
+            <!-- 内容区域 -->
+            <div class="content-wrapper">
+                <!-- 小说列表视图 -->
+                <div class="view" id="view-novels">
+                    <div class="novels-header">
+                        <label class="novels-select-all">
+                            <input type="checkbox" id="select-all-novels-main">
+                            <span>全选</span>
+                        </label>
+                        <span class="novels-count" id="novels-count">0 本小说</span>
+                    </div>
+                    <div class="novels-grid" id="novels-grid">
+                        <!-- 动态加载小说卡片 -->
+                    </div>
+                </div>
+
+                <!-- 分类管理视图 -->
+                <div class="view hidden" id="view-categories">
+                    <div class="section-header">
+                        <h2>分类管理</h2>
+                        <button class="btn btn-primary" id="btn-add-category">
+                            <i class="fas fa-plus"></i>
+                            新建分类
+                        </button>
+                    </div>
+                    <div class="categories-list" id="categories-list">
+                        <!-- 动态加载分类 -->
+                    </div>
+                </div>
+
+                <!-- 标签管理视图 -->
+                <div class="view hidden" id="view-tags">
+                    <div class="section-header">
+                        <h2>标签管理</h2>
+                        <button class="btn btn-primary" id="btn-add-tag">
+                            <i class="fas fa-plus"></i>
+                            新建标签
+                        </button>
+                    </div>
+                    <div class="tags-list" id="tags-list">
+                        <!-- 动态加载标签 -->
+                    </div>
+                </div>
+
+                <!-- 爬虫管理视图 -->
+                <div class="view hidden" id="view-crawler">
+                    <div class="section-header">
+                        <h2>爬虫管理</h2>
+                        <button class="btn btn-primary" id="btn-add-crawler-task">
+                            <i class="fas fa-plus"></i>
+                            新建爬虫任务
+                        </button>
+                    </div>
+                    <div class="crawler-content">
+                        <div class="crawler-stats">
+                            <div class="stat-card">
+                                <i class="fas fa-tasks"></i>
+                                <span class="stat-value" id="crawler-total-tasks">0</span>
+                                <span class="stat-label">总任务</span>
+                            </div>
+                            <div class="stat-card">
+                                <i class="fas fa-play-circle"></i>
+                                <span class="stat-value" id="crawler-running-tasks">0</span>
+                                <span class="stat-label">运行中</span>
+                            </div>
+                            <div class="stat-card">
+                                <i class="fas fa-check-circle"></i>
+                                <span class="stat-value" id="crawler-completed-tasks">0</span>
+                                <span class="stat-label">已完成</span>
+                            </div>
+                            <div class="stat-card">
+                                <i class="fas fa-book"></i>
+                                <span class="stat-value" id="crawler-downloaded-novels">0</span>
+                                <span class="stat-label">已下载小说</span>
+                            </div>
+                        </div>
+
+                        <div class="crawler-tasks-section">
+                            <h3>爬虫任务列表</h3>
+                            <div class="crawler-filters">
+                                <select id="crawler-status-filter">
+                                    <option value="">全部状态</option>
+                                    <option value="pending">等待中</option>
+                                    <option value="running">运行中</option>
+                                    <option value="completed">已完成</option>
+                                    <option value="failed">失败</option>
+                                </select>
+                                <input type="text" id="crawler-search" placeholder="搜索任务...">
+                            </div>
+
+                            <div class="crawler-tasks-list" id="crawler-tasks-list">
+                                <!-- 动态加载爬虫任务 -->
+                                <div class="empty-state">
+                                    <i class="fas fa-spider"></i>
+                                    <h3>暂无爬虫任务</h3>
+                                    <p>点击"新建爬虫任务"按钮添加爬虫</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- AI 配置视图 -->
+                <div class="view hidden" id="view-ai-config">
+                    <div class="section-header">
+                        <h2>AI 配置</h2>
+                        <button class="btn btn-primary" id="btn-add-ai-config">
+                            <i class="fas fa-plus"></i>
+                            添加配置
+                        </button>
+                    </div>
+                    <div class="ai-config-content">
+                        <div class="ai-config-info">
+                            <div class="info-card">
+                                <i class="fas fa-info-circle"></i>
+                                <div class="info-text">
+                                    <h4>AI 功能说明</h4>
+                                    <p>配置 AI 接口后，可在小说阅读时使用 AI 辅助功能，如智能摘要、情节分析、角色关系梳理等。</p>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="ai-config-list-section">
+                            <h3>配置列表</h3>
+                            <div class="ai-config-list" id="ai-config-list">
+                                <!-- 动态加载配置列表 -->
+                                <div class="empty-state">
+                                    <i class="fas fa-robot"></i>
+                                    <h3>暂无 AI 配置</h3>
+                                    <p>点击"添加配置"按钮创建 AI 配置</p>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- AI 聊天测试区域 -->
+                        <div class="ai-chat-section" id="ai-chat-section" style="display: none;">
+                            <h3>AI 测试对话</h3>
+                            <div class="ai-chat-container">
+                                <div class="ai-chat-messages" id="ai-chat-messages">
+                                    <!-- 动态加载消息 -->
+                                </div>
+                                <div class="ai-chat-input-area">
+                                    <textarea id="ai-chat-input" placeholder="输入消息测试 AI 连接..." rows="2"></textarea>
+                                    <button class="btn btn-primary" id="btn-ai-send">
+                                        <i class="fas fa-paper-plane"></i>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- 批量操作栏 -->
+    <div class="batch-actions-bar hidden" id="batch-actions-bar">
+        <div class="batch-info">
+            已选择 <span id="batch-selected-count">0</span> 本小说
+        </div>
+        <div class="batch-buttons">
+            <button class="btn btn-sm btn-primary" id="btn-batch-tags">
+                <i class="fas fa-tags"></i>
+                添加标签
+            </button>
+            <button class="btn btn-sm btn-primary" id="btn-batch-category">
+                <i class="fas fa-folder"></i>
+                设置分类
+            </button>
+            <button class="btn btn-sm btn-primary" id="btn-batch-status">
+                <i class="fas fa-book-reader"></i>
+                阅读状态
+            </button>
+            <button class="btn btn-sm btn-danger" id="btn-batch-delete">
+                <i class="fas fa-trash"></i>
+                删除
+            </button>
+            <button class="btn btn-sm btn-secondary" id="btn-batch-clear">
+                <i class="fas fa-times"></i>
+                取消
+            </button>
+        </div>
+    </div>
+
+    <!-- 添加/编辑小说弹窗 -->
+    <div class="modal" id="novel-modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 id="novel-modal-title">添加小说</h3>
+                <button class="btn-close">&times;</button>
+            </div>
+            <div class="modal-body">
+                <form id="novel-form">
+                    <input type="hidden" id="novel-id">
+                    <div class="form-group">
+                        <label>小说名称 *</label>
+                        <input type="text" id="novel-title" required>
+                    </div>
+                    <div class="form-group">
+                        <label>作者</label>
+                        <input type="text" id="novel-author">
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>分类</label>
+                            <select id="novel-category">
+                                <option value="">无分类</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>阅读状态</label>
+                            <select id="novel-status">
+                                <option value="0">未读</option>
+                                <option value="1">阅读中</option>
+                                <option value="2">已读完</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>标签</label>
+                        <div class="tag-selector" id="novel-tag-selector">
+                            <!-- 动态加载标签选择 -->
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>文件路径</label>
+                        <div class="file-input-group">
+                            <input type="text" id="novel-file-path" placeholder="选择本地小说文件...">
+                            <button type="button" class="btn btn-secondary" id="btn-browse-file">
+                                <i class="fas fa-folder-open"></i>
+                            </button>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>简介</label>
+                        <textarea id="novel-description" rows="3"></textarea>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary btn-cancel">取消</button>
+                <button class="btn btn-primary" id="btn-save-novel">保存</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 分类弹窗 -->
+    <div class="modal" id="category-modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 id="category-modal-title">新建分类</h3>
+                <button class="btn-close">&times;</button>
+            </div>
+            <div class="modal-body">
+                <form id="category-form">
+                    <input type="hidden" id="category-id">
+                    <div class="form-group">
+                        <label>分类名称 *</label>
+                        <input type="text" id="category-name" required>
+                    </div>
+                    <div class="form-group">
+                        <label>描述</label>
+                        <textarea id="category-description" rows="2"></textarea>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary btn-cancel">取消</button>
+                <button class="btn btn-primary" id="btn-save-category">保存</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 标签弹窗 -->
+    <div class="modal" id="tag-modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 id="tag-modal-title">新建标签</h3>
+                <button class="btn-close">&times;</button>
+            </div>
+            <div class="modal-body">
+                <form id="tag-form">
+                    <input type="hidden" id="tag-id">
+                    <div class="form-group">
+                        <label>标签名称 *</label>
+                        <input type="text" id="tag-name" required>
+                    </div>
+                    <div class="form-group">
+                        <label>颜色</label>
+                        <div class="color-picker">
+                            <input type="color" id="tag-color" value="#3498db">
+                            <span class="color-value">#3498db</span>
+                        </div>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary btn-cancel">取消</button>
+                <button class="btn btn-primary" id="btn-save-tag">保存</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 批量操作弹窗 -->
+    <div class="modal batch-modal" id="batch-action-modal">
+        <div class="modal-content modal-lg">
+            <div class="modal-header">
+                <h3 id="batch-modal-title">批量操作</h3>
+                <button class="btn-close">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="novels-preview" id="batch-novels-preview">
+                    <!-- 动态加载选中小说列表 -->
+                </div>
+
+                <div class="action-mode-tabs">
+                    <button class="action-mode-tab active" data-mode="tags">添加标签</button>
+                    <button class="action-mode-tab" data-mode="category">设置分类</button>
+                    <button class="action-mode-tab" data-mode="status">阅读状态</button>
+                </div>
+
+                <!-- 标签操作 -->
+                <div class="action-panel" id="action-panel-tags">
+                    <div class="form-group">
+                        <label>选择要添加的标签</label>
+                        <div class="tag-select-grid" id="batch-tag-select">
+                            <!-- 动态加载标签 -->
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 分类操作 -->
+                <div class="action-panel hidden" id="action-panel-category">
+                    <div class="form-group">
+                        <label>选择分类</label>
+                        <select id="batch-category-select">
+                            <option value="">无分类</option>
+                        </select>
+                    </div>
+                </div>
+
+                <!-- 状态操作 -->
+                <div class="action-panel hidden" id="action-panel-status">
+                    <div class="form-group">
+                        <label>阅读状态</label>
+                        <select id="batch-status-select">
+                            <option value="0">未读</option>
+                            <option value="1">阅读中</option>
+                            <option value="2">已读完</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary btn-cancel">取消</button>
+                <button class="btn btn-primary" id="btn-execute-batch">确认</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 批量导入弹窗 -->
+    <div class="modal" id="batch-import-modal">
+        <div class="modal-content modal-lg">
+            <div class="modal-header">
+                <h3>批量导入小说</h3>
+                <button class="btn-close">&times;</button>
+            </div>
+            <div class="modal-body">
+                <!-- 步骤1: 选择文件夹 -->
+                <div class="import-step" id="import-step-1">
+                    <div class="form-group">
+                        <label>选择小说文件夹</label>
+                        <div class="file-input-group">
+                            <input type="text" id="import-folder-path" placeholder="点击右侧按钮选择文件夹..." readonly>
+                            <button type="button" class="btn btn-primary" id="btn-select-folder">
+                                <i class="fas fa-folder-open"></i>
+                                浏览
+                            </button>
+                        </div>
+                        <p class="form-hint">支持格式: TXT, EPUB, PDF, MOBI, AZW3, DOC, DOCX, RTF</p>
+                    </div>
+
+                    <div class="form-group">
+                        <label>导入设置</label>
+                        <div class="import-options">
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="import-create-categories" checked>
+                                <span>根据子文件夹自动创建分类</span>
+                            </label>
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label>默认标签（可选）</label>
+                        <div class="tag-selector" id="import-tag-selector">
+                            <!-- 动态加载标签选择 -->
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label>默认阅读状态</label>
+                        <select id="import-default-status">
+                            <option value="0">未读</option>
+                            <option value="1">阅读中</option>
+                            <option value="2">已读完</option>
+                        </select>
+                    </div>
+                </div>
+
+                <!-- 步骤2: 扫描结果 -->
+                <div class="import-step hidden" id="import-step-2">
+                    <div class="import-summary">
+                        <div class="import-stat">
+                            <span class="import-stat-value" id="scan-total">0</span>
+                            <span class="import-stat-label">发现文件</span>
+                        </div>
+                        <div class="import-stat">
+                            <span class="import-stat-value" id="scan-selected">0</span>
+                            <span class="import-stat-label">待导入</span>
+                        </div>
+                    </div>
+
+                    <div class="import-actions-bar">
+                        <label class="checkbox-label">
+                            <input type="checkbox" id="select-all-novels" checked>
+                            <span>全选</span>
+                        </label>
+                        <button class="btn btn-sm btn-secondary" id="btn-rescan">
+                            <i class="fas fa-sync-alt"></i>
+                            重新扫描
+                        </button>
+                    </div>
+
+                    <div class="import-novels-list" id="import-novels-list">
+                        <!-- 动态加载扫描到的小说 -->
+                    </div>
+                </div>
+
+                <!-- 步骤3: 导入结果 -->
+                <div class="import-step hidden" id="import-step-3">
+                    <div class="import-result">
+                        <div class="import-result-icon">
+                            <i class="fas fa-check-circle"></i>
+                        </div>
+                        <div class="import-result-stats">
+                            <div class="import-result-item">
+                                <span class="import-result-label">成功导入:</span>
+                                <span class="import-result-value success" id="result-imported">0</span>
+                            </div>
+                            <div class="import-result-item">
+                                <span class="import-result-label">已存在跳过:</span>
+                                <span class="import-result-value warning" id="result-skipped">0</span>
+                            </div>
+                            <div class="import-result-item">
+                                <span class="import-result-label">导入失败:</span>
+                                <span class="import-result-value error" id="result-failed">0</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="import-errors hidden" id="import-errors">
+                        <h4>错误信息</h4>
+                        <ul id="import-errors-list"></ul>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary btn-cancel" id="btn-import-cancel">取消</button>
+                <button class="btn btn-primary hidden" id="btn-start-scan">开始扫描</button>
+                <button class="btn btn-primary hidden" id="btn-start-import">开始导入</button>
+                <button class="btn btn-primary hidden" id="btn-import-finish">完成</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 文件输入（隐藏） -->
+    <input type="file" id="file-input" accept=".txt,.epub,.pdf,.mobi,.azw3" style="display: none;">
+
+    <!-- 文件夹输入（隐藏） -->
+    <input type="file" id="folder-input" webkitdirectory directory multiple style="display: none;">
+
+    <!-- AI 配置弹窗 -->
+    <div class="modal" id="ai-config-modal">
+        <div class="modal-content modal-lg">
+            <div class="modal-header">
+                <h3 id="ai-config-modal-title">添加 AI 配置</h3>
+                <button class="btn-close">&times;</button>
+            </div>
+            <div class="modal-body">
+                <form id="ai-config-form">
+                    <input type="hidden" id="ai-config-id">
+                    <div class="form-group">
+                        <label>配置名称 *</label>
+                        <input type="text" id="ai-config-name" placeholder="例如：OpenAI GPT-4" required>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>AI 提供商 *</label>
+                            <select id="ai-config-provider" required>
+                                <option value="openai">OpenAI / 兼容 API</option>
+                                <option value="claude">Claude (Anthropic)</option>
+                                <option value="ollama">Ollama (本地)</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>模型 *</label>
+                            <input type="text" id="ai-config-model" placeholder="gpt-3.5-turbo" required>
+                            <small class="form-hint" id="ai-model-hint">常用模型：gpt-3.5-turbo, gpt-4, gpt-4-turbo</small>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>API Key</label>
+                        <input type="password" id="ai-config-api-key" placeholder="sk-...">
+                        <small class="form-hint">OpenAI 和 Claude 需要提供 API Key，Ollama 可留空</small>
+                    </div>
+                    <div class="form-group">
+                        <label>API Base URL</label>
+                        <input type="text" id="ai-config-api-base" placeholder="https://api.openai.com/v1">
+                        <small class="form-hint">可选，用于自定义 API 地址或第三方兼容服务</small>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>温度 (Temperature)</label>
+                            <input type="number" id="ai-config-temperature" min="0" max="2" step="0.1" value="0.7">
+                            <small class="form-hint">0-2 之间，值越高回答越随机</small>
+                        </div>
+                        <div class="form-group">
+                            <label>最大令牌数 (Max Tokens)</label>
+                            <input type="number" id="ai-config-max-tokens" min="1" max="8192" value="2000">
+                        </div>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary btn-cancel">取消</button>
+                <button class="btn btn-secondary" id="btn-test-ai-config">
+                    <i class="fas fa-plug"></i>
+                    测试连接
+                </button>
+                <button class="btn btn-primary" id="btn-save-ai-config">保存</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 阅读器弹窗 -->
+    <div class="modal reader-modal" id="reader-modal">
+        <div class="modal-content reader-content">
+            <div class="reader-header">
+                <div class="reader-title-section">
+                    <h3 id="reader-novel-title">小说标题</h3>
+                    <span class="reader-chapter-title" id="reader-chapter-title"></span>
+                </div>
+                <div class="reader-controls">
+                    <button class="btn-icon" id="reader-font-decrease" title="减小字体">
+                        <i class="fas fa-font"></i><small>-</small>
+                    </button>
+                    <button class="btn-icon" id="reader-font-increase" title="增大字体">
+                        <i class="fas fa-font"></i><small>+</small>
+                    </button>
+                    <button class="btn-icon" id="reader-theme-toggle" title="切换主题">
+                        <i class="fas fa-moon"></i>
+                    </button>
+                    <button class="btn-icon" id="reader-close" title="关闭">
+                        <i class="fas fa-times"></i>
+                    </button>
+                </div>
+            </div>
+
+            <div class="reader-body">
+                <div class="reader-sidebar">
+                    <div class="reader-toc-header">
+                        <i class="fas fa-list"></i>
+                        <span>章节目录</span>
+                        <span class="reader-toc-count" id="reader-toc-count">0章</span>
+                    </div>
+                    <div class="reader-toc" id="reader-toc">
+                        <!-- 章节列表 -->
+                    </div>
+                </div>
+
+                <div class="reader-main">
+                    <div class="reader-content-area" id="reader-content">
+                        <div class="reader-loading" id="reader-loading">
+                            <i class="fas fa-spinner fa-spin"></i>
+                            <span>加载中...</span>
+                        </div>
+                        <div class="reader-empty hidden" id="reader-empty">
+                            <i class="fas fa-book-open"></i>
+                            <p>无法加载小说内容</p>
+                        </div>
+                        <div class="reader-text" id="reader-text"></div>
+                    </div>
+
+                    <div class="reader-nav">
+                        <button class="btn btn-secondary" id="reader-prev-chapter" disabled>
+                            <i class="fas fa-chevron-left"></i>
+                            上一章
+                        </button>
+                        <span class="reader-progress" id="reader-progress">1 / 1</span>
+                        <button class="btn btn-secondary" id="reader-next-chapter" disabled>
+                            下一章
+                            <i class="fas fa-chevron-right"></i>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/js/app.js"></script>
+</body>
+</html>
