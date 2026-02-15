@@ -1666,8 +1666,18 @@ body {
     color: white;
 }
 
+.ai-config-icon.openai-compatible {
+    background: #6366f1;
+    color: white;
+}
+
 .ai-config-icon.claude {
     background: #d97757;
+    color: white;
+}
+
+.ai-config-icon.gemini {
+    background: #4285f4;
     color: white;
 }
 

@@ -368,6 +368,144 @@ class OllamaClient(BaseAIClient):
             return False, str(e)
 
 
+class GeminiClient(BaseAIClient):
+    """Google Gemini 客户端"""
+
+    def __init__(self, config: Dict[str, Any]):
+        super().__init__(config)
+        self.client = None
+        self._init_client()
+
+    def _init_client(self):
+        """初始化 Gemini 客户端"""
+        try:
+            import google.generativeai as genai
+
+            genai.configure(api_key=self.api_key)
+
+            # 配置生成参数
+            generation_config = {
+                'temperature': self.temperature,
+                'max_output_tokens': self.max_tokens,
+            }
+
+            self.client = genai.GenerativeModel(
+                model_name=self.model,
+                generation_config=generation_config
+            )
+        except ImportError:
+            raise ImportError("请安装 google-generativeai: pip install google-generativeai")
+
+    def chat(self, messages: List[Dict[str, str]], stream: bool = False):
+        """发送聊天请求"""
+        if not self.client:
+            raise RuntimeError("Gemini 客户端未初始化")
+
+        # 转换消息格式为 Gemini 格式
+        # Gemini 使用 history + current message 格式
+        history = []
+        current_message = None
+
+        for msg in messages:
+            role = msg.get('role')
+            content = msg.get('content', '')
+
+            if role == 'system':
+                # Gemini 不直接支持 system message，合并到第一条 user message
+                if not history and not current_message:
+                    current_message = f"System: {content}\n\n"
+                continue
+            elif role == 'user':
+                if current_message is None:
+                    current_message = content
+                else:
+                    history.append({'role': 'user', 'parts': [current_message]})
+                    current_message = content
+            elif role == 'assistant':
+                history.append({'role': 'model', 'parts': [content]})
+
+        if current_message is None:
+            current_message = "Hello"
+
+        # 创建聊天会话
+        chat = self.client.start_chat(history=history)
+
+        if stream:
+            response = chat.send_message(current_message, stream=True)
+            return response
+        else:
+            response = chat.send_message(current_message)
+            return response.text
+
+    def test_connection(self) -> tuple:
+        """测试连接"""
+        try:
+            response = self.client.generate_content("Hello")
+            return True, "连接成功"
+        except Exception as e:
+            return False, str(e)
+
+
+class OpenAICompatibleClient(OpenAIClient):
+    """OpenAI 兼容 API 客户端（如 DashScope、智谱、文心一言等）"""
+
+    def __init__(self, config: Dict[str, Any]):
+        # 调用父类初始化
+        BaseAIClient.__init__(self, config)
+        self.client = None
+        self._init_client()
+
+    def _init_client(self):
+        """初始化 OpenAI 兼容客户端"""
+        try:
+            from openai import OpenAI
+
+            client_kwargs = {
+                'api_key': self.api_key,
+            }
+
+            # 兼容 API 必须设置 base_url
+            if self.api_base:
+                client_kwargs['base_url'] = self.api_base
+            else:
+                # 使用常见的兼容地址作为默认
+                client_kwargs['base_url'] = 'https://api.openai.com/v1'
+
+            self.client = OpenAI(**client_kwargs)
+        except ImportError:
+            raise ImportError("请安装 openai: pip install openai")
+
+    def chat(self, messages: List[Dict[str, str]], stream: bool = False):
+        """发送聊天请求"""
+        if not self.client:
+            raise RuntimeError("OpenAI 兼容客户端未初始化")
+
+        response = self.client.chat.completions.create(
+            model=self.model,
+            messages=messages,
+            temperature=self.temperature,
+            max_tokens=self.max_tokens,
+            stream=stream
+        )
+
+        if stream:
+            return response
+        else:
+            return response.choices[0].message.content
+
+    def test_connection(self) -> tuple:
+        """测试连接"""
+        try:
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=[{"role": "user", "content": "Hello"}],
+                max_tokens=5
+            )
+            return True, "连接成功"
+        except Exception as e:
+            return False, str(e)
+
+
 class AIClientFactory:
     """AI 客户端工厂"""
 
@@ -375,6 +513,8 @@ class AIClientFactory:
         'openai': OpenAIClient,
         'claude': ClaudeClient,
         'ollama': OllamaClient,
+        'gemini': GeminiClient,
+        'openai-compatible': OpenAICompatibleClient,
     }
 
     @classmethod
@@ -392,9 +532,11 @@ class AIClientFactory:
     def get_available_providers(cls) -> List[Dict[str, str]]:
         """获取可用的 AI 提供商列表"""
         return [
-            {'id': 'openai', 'name': 'OpenAI / 兼容 API', 'models': ['gpt-3.5-turbo', 'gpt-4', 'gpt-4-turbo']},
+            {'id': 'openai', 'name': 'OpenAI', 'models': ['gpt-3.5-turbo', 'gpt-4', 'gpt-4-turbo', 'gpt-4o']},
+            {'id': 'openai-compatible', 'name': 'OpenAI 兼容 API', 'models': ['qwen-turbo', 'qwen-plus', 'qwen-max', 'deepseek-chat', 'moonshot-v1-8k']},
             {'id': 'claude', 'name': 'Claude (Anthropic)', 'models': ['claude-3-opus-20240229', 'claude-3-sonnet-20240229', 'claude-3-haiku-20240307']},
-            {'id': 'ollama', 'name': 'Ollama (本地)', 'models': ['llama2', 'llama3', 'mistral', 'qwen']},
+            {'id': 'gemini', 'name': 'Google Gemini', 'models': ['gemini-pro', 'gemini-pro-vision', 'gemini-ultra']},
+            {'id': 'ollama', 'name': 'Ollama (本地)', 'models': ['llama2', 'llama3', 'mistral', 'qwen', 'phi3']},
         ]
 
 
@@ -405,7 +547,11 @@ def get_ai_client() -> Optional[BaseAIClient]:
     if not config:
         return None
 
-    if not config.get('api_key') and config.get('provider') != 'ollama':
+    # 检查是否需要 API Key
+    provider = config.get('provider', 'openai')
+    requires_api_key = provider not in ['ollama']  # Ollama 不需要 API Key
+
+    if requires_api_key and not config.get('api_key'):
         return None
 
     try:

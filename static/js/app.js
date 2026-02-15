@@ -906,9 +906,17 @@ const providerModels = {
         hint: '常用模型：gpt-3.5-turbo, gpt-4, gpt-4-turbo, gpt-4o',
         defaultModel: 'gpt-3.5-turbo'
     },
+    'openai-compatible': {
+        hint: '阿里：qwen-turbo, qwen-plus, qwen-max | 月之暗面：moonshot-v1-8k, moonshot-v1-32k | DeepSeek：deepseek-chat',
+        defaultModel: 'qwen-turbo'
+    },
     claude: {
         hint: '常用模型：claude-3-opus-20240229, claude-3-sonnet-20240229, claude-3-haiku-20240307',
         defaultModel: 'claude-3-haiku-20240307'
+    },
+    gemini: {
+        hint: '常用模型：gemini-pro, gemini-1.5-pro, gemini-1.5-flash',
+        defaultModel: 'gemini-pro'
     },
     ollama: {
         hint: '本地模型：llama2, llama3, mistral, qwen, phi3 等',
@@ -999,7 +1007,9 @@ function renderAIConfigs() {
 function getProviderIcon(provider) {
     const icons = {
         openai: 'brain',
+        'openai-compatible': 'plug',
         claude: 'feather-alt',
+        gemini: 'sparkles',
         ollama: 'server'
     };
     return icons[provider] || 'robot';
