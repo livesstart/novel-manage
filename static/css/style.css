@@ -764,6 +764,11 @@ body {
         flex-direction: column;
         align-items: stretch;
     }
+
+    .batch-ai-overview,
+    .batch-ai-layout {
+        grid-template-columns: 1fr;
+    }
 }
 
 /* 加载动画 */
@@ -1205,6 +1210,209 @@ body {
 .action-mode-tab.active {
     background-color: var(--primary-color);
     color: white;
+}
+
+.batch-ai-modal .modal-content {
+    max-width: 1180px;
+}
+
+.batch-ai-overview {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 16px;
+    margin-bottom: 18px;
+}
+
+.batch-ai-progress-card,
+.batch-ai-queue-pane,
+.batch-ai-workspace {
+    border: 1px solid var(--border-color);
+    border-radius: 20px;
+    background: rgba(255, 255, 255, 0.94);
+    box-shadow: var(--shadow-soft);
+}
+
+.batch-ai-progress-card {
+    padding: 18px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.batch-ai-progress-label,
+.batch-ai-pane-title {
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--text-secondary);
+    letter-spacing: 0.02em;
+}
+
+.batch-ai-progress-card strong {
+    font-size: 20px;
+    color: var(--text-primary);
+}
+
+.batch-ai-progress-bar {
+    height: 10px;
+    border-radius: 999px;
+    overflow: hidden;
+    background: rgba(148, 163, 184, 0.18);
+}
+
+.batch-ai-progress-bar span {
+    display: block;
+    height: 100%;
+    width: 0;
+    border-radius: inherit;
+    background: linear-gradient(90deg, var(--primary-color), #22c55e);
+    transition: width 0.25s ease;
+}
+
+.batch-ai-layout {
+    display: grid;
+    grid-template-columns: 320px minmax(0, 1fr);
+    gap: 18px;
+}
+
+.batch-ai-queue-pane,
+.batch-ai-workspace {
+    padding: 18px;
+}
+
+.batch-ai-queue-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin-top: 14px;
+    max-height: 500px;
+    overflow-y: auto;
+}
+
+.batch-ai-queue-item {
+    padding: 14px;
+    border-radius: 16px;
+    border: 1px solid rgba(148, 163, 184, 0.22);
+    background: #fff;
+    transition: all 0.2s ease;
+}
+
+.batch-ai-queue-item.active {
+    border-color: rgba(79, 70, 229, 0.4);
+    box-shadow: 0 14px 30px rgba(79, 70, 229, 0.12);
+}
+
+.batch-ai-queue-item-top {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 6px;
+}
+
+.batch-ai-queue-item-top strong {
+    font-size: 14px;
+    line-height: 1.5;
+    color: var(--text-primary);
+}
+
+.batch-ai-queue-item-meta {
+    font-size: 12px;
+    color: var(--text-secondary);
+}
+
+.batch-ai-queue-status,
+.batch-ai-current-status {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 6px 10px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 700;
+    white-space: nowrap;
+}
+
+.batch-ai-queue-status.pending,
+.batch-ai-current-status.pending {
+    background: rgba(148, 163, 184, 0.16);
+    color: #64748b;
+}
+
+.batch-ai-queue-status.generating,
+.batch-ai-current-status.generating {
+    background: rgba(59, 130, 246, 0.14);
+    color: #2563eb;
+}
+
+.batch-ai-queue-status.generated,
+.batch-ai-current-status.generated {
+    background: rgba(249, 115, 22, 0.14);
+    color: #ea580c;
+}
+
+.batch-ai-queue-status.applied,
+.batch-ai-current-status.applied {
+    background: rgba(34, 197, 94, 0.14);
+    color: #16a34a;
+}
+
+.batch-ai-queue-status.skipped,
+.batch-ai-current-status.skipped {
+    background: rgba(100, 116, 139, 0.16);
+    color: #475569;
+}
+
+.batch-ai-queue-status.error,
+.batch-ai-current-status.error {
+    background: rgba(239, 68, 68, 0.14);
+    color: #dc2626;
+}
+
+.batch-ai-current-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
+    margin-bottom: 18px;
+}
+
+.batch-ai-current-header h4 {
+    margin: 0 0 6px;
+    font-size: 22px;
+}
+
+.batch-ai-current-meta {
+    color: var(--text-secondary);
+    font-size: 14px;
+    line-height: 1.6;
+}
+
+.batch-ai-summary-box {
+    min-height: 96px;
+    padding: 14px 16px;
+    border-radius: 16px;
+    border: 1px dashed rgba(148, 163, 184, 0.4);
+    background: rgba(248, 250, 252, 0.94);
+    color: var(--text-secondary);
+    line-height: 1.7;
+    white-space: pre-wrap;
+}
+
+.batch-ai-section-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    margin-bottom: 8px;
+}
+
+.tag-select-item.generated-suggestion {
+    box-shadow: inset 0 0 0 1px rgba(79, 70, 229, 0.18);
+}
+
+.tag-select-item.disabled {
+    cursor: not-allowed;
+    opacity: 0.55;
 }
 
 /* 爬虫管理页面样式 */

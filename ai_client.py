@@ -68,6 +68,73 @@ def _extract_openai_style_models(payload: Dict[str, Any]) -> List[str]:
     return models
 
 
+def _extract_openai_style_message_text(payload: Dict[str, Any]) -> str:
+    """从 OpenAI 风格响应中提取文本内容，并转换常见空返回原因。"""
+    if not isinstance(payload, dict):
+        raise RuntimeError('AI 返回数据格式无效')
+
+    error = payload.get('error')
+    if isinstance(error, dict):
+        error_message = error.get('message') or error.get('code') or 'AI 请求失败'
+        raise RuntimeError(str(error_message))
+
+    choices = payload.get('choices') or []
+    if not choices:
+        raise RuntimeError('AI 未返回可用结果')
+
+    choice = choices[0] if isinstance(choices[0], dict) else {}
+    message = choice.get('message') or {}
+    content = message.get('content')
+
+    if isinstance(content, list):
+        text_parts = []
+        for part in content:
+            if isinstance(part, str):
+                text_parts.append(part)
+                continue
+            if not isinstance(part, dict):
+                continue
+
+            part_text = part.get('text')
+            if part_text:
+                text_parts.append(str(part_text))
+                continue
+
+            output_text = part.get('output_text') or part.get('content')
+            if output_text:
+                text_parts.append(str(output_text))
+
+        content = ''.join(text_parts)
+    elif content is None:
+        content = ''
+    else:
+        content = str(content)
+
+    content = content.strip()
+    if content:
+        return content
+
+    refusal = message.get('refusal')
+    if refusal:
+        raise RuntimeError(str(refusal).strip())
+
+    finish_reason = str(choice.get('finish_reason') or '').strip()
+    lowered_finish_reason = finish_reason.lower()
+    if finish_reason:
+        if any(keyword in lowered_finish_reason for keyword in ('content_filter', 'prohibited_content', 'safety')):
+            raise RuntimeError('模型因内容策略拦截，未返回内容，请更换书目或模型后重试')
+
+        if lowered_finish_reason in ('length', 'max_tokens'):
+            raise RuntimeError('模型输出被截断，请减少输入内容或调整输出长度后重试')
+
+        raise RuntimeError(f'模型未返回内容（{finish_reason}）')
+
+    if message:
+        raise RuntimeError('模型返回了空消息，请重试或更换模型后再试')
+
+    raise RuntimeError('AI 未返回内容')
+
+
 def _get_provider_defaults(provider: str) -> List[str]:
     """获取提供商默认模型，用于发现失败时回退。"""
     for item in AIClientFactory.get_available_providers():
@@ -598,11 +665,7 @@ class GeminiClient(BaseAIClient):
             return generate()
 
         result = response.json()
-        choices = result.get('choices') or []
-        if not choices:
-            return ''
-        message = choices[0].get('message') or {}
-        return message.get('content', '')
+        return _extract_openai_style_message_text(result)
 
     def test_connection(self) -> tuple:
         """测试连接"""
@@ -690,11 +753,7 @@ class OpenAICompatibleClient(BaseAIClient):
             return generate()
 
         result = response.json()
-        choices = result.get('choices') or []
-        if not choices:
-            return ''
-        message = choices[0].get('message') or {}
-        return message.get('content', '')
+        return _extract_openai_style_message_text(result)
 
     def test_connection(self) -> tuple:
         """测试连接"""

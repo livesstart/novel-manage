@@ -1409,6 +1409,8 @@ def test_ai_config(config_id):
 
     try:
         return jsonify(run_ai_config_test(config))
+    except (ValueError, RuntimeError) as e:
+        return jsonify({'success': False, 'message': str(e)}), 422
     except Exception as e:
         return jsonify({'success': False, 'message': str(e)}), 500
 
@@ -1525,6 +1527,8 @@ def generate_novel_metadata():
                 'used_excerpt': bool(content_excerpt)
             }
         })
+    except (ValueError, RuntimeError) as e:
+        return jsonify({'success': False, 'message': str(e)}), 422
     except Exception as e:
         return jsonify({'success': False, 'message': str(e)}), 500
 

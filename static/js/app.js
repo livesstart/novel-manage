@@ -20,6 +20,13 @@ const state = {
     batchActionMode: 'tags'
 };
 
+const batchAIState = {
+    queue: [],
+    currentIndex: 0,
+    isGenerating: false,
+    isApplying: false
+};
+
 // API 封装
 const api = {
     async get(url) {
@@ -1688,6 +1695,379 @@ async function batchDeleteNovels() {
     }
 }
 
+function getSelectedNovelsForBatchAI() {
+    return state.novels.filter(novel => state.selectedNovels.has(novel.id));
+}
+
+function getCurrentBatchAIItem() {
+    return batchAIState.queue[batchAIState.currentIndex] || null;
+}
+
+function getBatchAIStatusMeta(status) {
+    const metaMap = {
+        pending: { text: '待处理', className: 'pending' },
+        generating: { text: '生成中', className: 'generating' },
+        generated: { text: '待确认', className: 'generated' },
+        applied: { text: '已应用', className: 'applied' },
+        skipped: { text: '已跳过', className: 'skipped' },
+        error: { text: '生成失败', className: 'error' }
+    };
+    return metaMap[status] || metaMap.pending;
+}
+
+function buildBatchAIQueueItem(novel) {
+    const originalTagIds = (novel.tags || []).map(tag => tag.id);
+    return {
+        id: novel.id,
+        novel: {
+            id: novel.id,
+            title: novel.title,
+            author: novel.author || '',
+            description: novel.description || '',
+            file_path: novel.file_path || '',
+            category_id: novel.category_id || null,
+            category_name: novel.category_name || '',
+            status: novel.status,
+            tags: (novel.tags || []).map(tag => ({ ...tag }))
+        },
+        status: 'pending',
+        error: '',
+        generatedSummary: '',
+        generatedTagIds: [],
+        originalTagIds,
+        selectedTagIds: [...originalTagIds],
+        applySummary: true,
+        applyTags: true
+    };
+}
+
+function resetBatchAIQueueState() {
+    batchAIState.queue = [];
+    batchAIState.currentIndex = 0;
+    batchAIState.isGenerating = false;
+    batchAIState.isApplying = false;
+}
+
+function openBatchAIModal() {
+    const selectedNovels = getSelectedNovelsForBatchAI();
+    if (selectedNovels.length === 0) {
+        showToast('请先选择小说', 'error');
+        return;
+    }
+
+    resetBatchAIQueueState();
+    batchAIState.queue = selectedNovels.map(buildBatchAIQueueItem);
+    renderBatchAIQueue();
+    openModal('batch-ai-modal');
+    processCurrentBatchAIItem();
+}
+
+function renderBatchAIQueue() {
+    const queueList = document.getElementById('batch-ai-queue-list');
+    const progressText = document.getElementById('batch-ai-progress-text');
+    const progressFill = document.getElementById('batch-ai-progress-fill');
+    const queueSummary = document.getElementById('batch-ai-queue-summary');
+    const queueHint = document.getElementById('batch-ai-queue-hint');
+
+    const total = batchAIState.queue.length;
+    const applied = batchAIState.queue.filter(item => item.status === 'applied').length;
+    const skipped = batchAIState.queue.filter(item => item.status === 'skipped').length;
+    const errors = batchAIState.queue.filter(item => item.status === 'error').length;
+    const doneCount = applied + skipped;
+    const progressPercent = total ? Math.round((doneCount / total) * 100) : 0;
+    const currentIndexDisplay = total ? Math.min(batchAIState.currentIndex + 1, total) : 0;
+
+    progressText.textContent = `${currentIndexDisplay} / ${total}`;
+    progressFill.style.width = `${progressPercent}%`;
+    queueSummary.textContent = `已应用 ${applied} 本，跳过 ${skipped} 本，待处理 ${Math.max(total - doneCount, 0)} 本`;
+    queueHint.textContent = errors > 0
+        ? `有 ${errors} 本生成失败，可重新生成或跳过后继续`
+        : '会逐本调用 AI，确认后再写回数据库';
+
+    queueList.innerHTML = batchAIState.queue.map((item, index) => {
+        const statusMeta = getBatchAIStatusMeta(item.status);
+        return `
+            <div class="batch-ai-queue-item ${index === batchAIState.currentIndex ? 'active' : ''} ${statusMeta.className}">
+                <div class="batch-ai-queue-item-top">
+                    <strong>${index + 1}. ${escapeHtml(item.novel.title)}</strong>
+                    <span class="batch-ai-queue-status ${statusMeta.className}">${statusMeta.text}</span>
+                </div>
+                <div class="batch-ai-queue-item-meta">${escapeHtml(item.novel.author || '未知作者')}</div>
+            </div>
+        `;
+    }).join('');
+
+    renderBatchAICurrentItem();
+}
+
+function renderBatchAICurrentItem() {
+    const item = getCurrentBatchAIItem();
+    const titleEl = document.getElementById('batch-ai-current-title');
+    const metaEl = document.getElementById('batch-ai-current-meta');
+    const statusEl = document.getElementById('batch-ai-current-status');
+    const existingSummaryEl = document.getElementById('batch-ai-existing-summary');
+    const generatedSummaryEl = document.getElementById('batch-ai-generated-summary');
+    const applySummaryEl = document.getElementById('batch-ai-apply-summary');
+    const applyTagsEl = document.getElementById('batch-ai-apply-tags');
+    const resultHintEl = document.getElementById('batch-ai-result-hint');
+    const regenerateBtn = document.getElementById('btn-batch-ai-regenerate');
+    const skipBtn = document.getElementById('btn-batch-ai-skip');
+    const applyBtn = document.getElementById('btn-batch-ai-apply-next');
+
+    if (!item) {
+        titleEl.textContent = '队列已完成';
+        metaEl.textContent = '本轮批量 AI 处理已经结束';
+        statusEl.textContent = '完成';
+        statusEl.className = 'batch-ai-current-status applied';
+        existingSummaryEl.textContent = '本轮没有待处理小说';
+        generatedSummaryEl.value = '';
+        generatedSummaryEl.disabled = true;
+        applySummaryEl.checked = false;
+        applySummaryEl.disabled = true;
+        applyTagsEl.checked = false;
+        applyTagsEl.disabled = true;
+        resultHintEl.textContent = '你可以关闭弹窗，或重新选择小说开启下一轮队列';
+        document.getElementById('batch-ai-tag-select').innerHTML = '';
+        regenerateBtn.disabled = true;
+        skipBtn.disabled = true;
+        applyBtn.disabled = true;
+        return;
+    }
+
+    const statusMeta = getBatchAIStatusMeta(item.status);
+    const isBusy = batchAIState.isGenerating || batchAIState.isApplying;
+    const canApply = item.status === 'generated';
+    const isLast = batchAIState.currentIndex === batchAIState.queue.length - 1;
+
+    titleEl.textContent = item.novel.title;
+    metaEl.textContent = [
+        item.novel.author || '未知作者',
+        item.novel.category_name || '未分类',
+        `已有 ${item.originalTagIds.length} 个标签`
+    ].join(' · ');
+    statusEl.textContent = statusMeta.text;
+    statusEl.className = `batch-ai-current-status ${statusMeta.className}`;
+    existingSummaryEl.textContent = item.novel.description || '暂无简介';
+
+    generatedSummaryEl.disabled = !canApply || isBusy;
+    generatedSummaryEl.value = item.generatedSummary || '';
+    applySummaryEl.checked = item.applySummary;
+    applySummaryEl.disabled = !canApply || isBusy;
+    applyTagsEl.checked = item.applyTags;
+    applyTagsEl.disabled = !canApply || isBusy;
+
+    if (item.status === 'generating') {
+        resultHintEl.textContent = '正在调用 AI 生成简介和标签，请稍候...';
+    } else if (item.status === 'error') {
+        resultHintEl.textContent = item.error || 'AI 生成失败，请重试';
+    } else if (item.error) {
+        resultHintEl.textContent = `上次保存失败：${item.error}`;
+    } else {
+        resultHintEl.textContent = item.generatedTagIds.length > 0
+            ? `AI 推荐了 ${item.generatedTagIds.length} 个标签，已自动勾选，可手动调整`
+            : '会保留已有标签，并自动勾选 AI 推荐标签';
+    }
+
+    regenerateBtn.disabled = isBusy;
+    skipBtn.disabled = isBusy;
+    applyBtn.disabled = !canApply || isBusy;
+    applyBtn.innerHTML = isLast
+        ? '<i class="fas fa-check"></i> 应用并完成'
+        : '<i class="fas fa-check"></i> 应用并下一个';
+    skipBtn.innerHTML = isLast
+        ? '<i class="fas fa-forward"></i> 跳过并完成'
+        : '<i class="fas fa-forward"></i> 跳过当前';
+
+    renderBatchAITagSelector();
+}
+
+function renderBatchAITagSelector() {
+    const container = document.getElementById('batch-ai-tag-select');
+    const item = getCurrentBatchAIItem();
+
+    if (!item) {
+        container.innerHTML = '';
+        return;
+    }
+
+    if (state.tags.length === 0) {
+        container.innerHTML = '<div class="form-hint">当前还没有标签，可先让 AI 生成后自动创建</div>';
+        return;
+    }
+
+    const selectedSet = new Set(item.selectedTagIds);
+    const generatedSet = new Set(item.generatedTagIds);
+    const disabledAttr = item.status !== 'generated' || batchAIState.isGenerating || batchAIState.isApplying;
+
+    container.innerHTML = state.tags.map(tag => `
+        <span class="tag-select-item ${selectedSet.has(tag.id) ? 'selected' : ''} ${generatedSet.has(tag.id) ? 'generated-suggestion' : ''} ${disabledAttr ? 'disabled' : ''}"
+              data-id="${tag.id}"
+              style="background-color: ${tag.color}20; color: ${tag.color}"
+              onclick="toggleBatchAITag(${tag.id})">
+            ${escapeHtml(tag.name)}
+        </span>
+    `).join('');
+}
+
+function toggleBatchAITag(tagId) {
+    const item = getCurrentBatchAIItem();
+    if (!item || item.status !== 'generated' || batchAIState.isGenerating || batchAIState.isApplying) {
+        return;
+    }
+
+    const selectedSet = new Set(item.selectedTagIds);
+    if (selectedSet.has(tagId)) {
+        selectedSet.delete(tagId);
+    } else {
+        selectedSet.add(tagId);
+    }
+    item.selectedTagIds = Array.from(selectedSet);
+    renderBatchAITagSelector();
+}
+
+function syncBatchAIInputsToCurrentItem() {
+    const item = getCurrentBatchAIItem();
+    if (!item) {
+        return;
+    }
+
+    item.generatedSummary = document.getElementById('batch-ai-generated-summary').value.trim();
+    item.applySummary = document.getElementById('batch-ai-apply-summary').checked;
+    item.applyTags = document.getElementById('batch-ai-apply-tags').checked;
+}
+
+async function processCurrentBatchAIItem(force = false) {
+    const item = getCurrentBatchAIItem();
+    if (!item || batchAIState.isGenerating) {
+        return;
+    }
+
+    if (item.status === 'generated' && !force) {
+        renderBatchAIQueue();
+        return;
+    }
+
+    batchAIState.isGenerating = true;
+    item.status = 'generating';
+    item.error = '';
+    renderBatchAIQueue();
+
+    try {
+        const res = await api.post('/api/ai/novels/metadata', { novel_id: item.id });
+        if (!res.success) {
+            throw new Error(res.message || 'AI 生成失败');
+        }
+
+        await loadTags();
+
+        item.generatedSummary = res.data.summary || '';
+        item.generatedTagIds = (res.data.tags || []).map(tag => tag.id);
+        item.selectedTagIds = Array.from(new Set([
+            ...item.originalTagIds,
+            ...item.generatedTagIds
+        ]));
+        item.applySummary = Boolean(item.generatedSummary);
+        item.applyTags = item.selectedTagIds.length > 0;
+        item.status = 'generated';
+        renderBatchAIQueue();
+    } catch (err) {
+        item.status = 'error';
+        item.error = err.message;
+        renderBatchAIQueue();
+        showToast(`《${item.novel.title}》生成失败：${err.message}`, 'error');
+    } finally {
+        batchAIState.isGenerating = false;
+        renderBatchAIQueue();
+    }
+}
+
+async function advanceBatchAIQueue() {
+    batchAIState.currentIndex += 1;
+
+    if (batchAIState.currentIndex >= batchAIState.queue.length) {
+        const applied = batchAIState.queue.filter(item => item.status === 'applied').length;
+        const skipped = batchAIState.queue.filter(item => item.status === 'skipped').length;
+        const failed = batchAIState.queue.filter(item => item.status === 'error').length;
+
+        closeModal('batch-ai-modal');
+        clearBatchSelection();
+        await Promise.all([loadNovels(), loadStats(), loadTags()]);
+        resetBatchAIQueueState();
+        showToast(
+            `批量 AI 完成：已应用 ${applied} 本，跳过 ${skipped} 本${failed ? `，失败 ${failed} 本` : ''}`,
+            failed ? 'error' : 'success'
+        );
+        return;
+    }
+
+    renderBatchAIQueue();
+    await processCurrentBatchAIItem();
+}
+
+async function skipCurrentBatchAIItem() {
+    const item = getCurrentBatchAIItem();
+    if (!item || batchAIState.isGenerating || batchAIState.isApplying) {
+        return;
+    }
+
+    syncBatchAIInputsToCurrentItem();
+    item.status = 'skipped';
+    await advanceBatchAIQueue();
+}
+
+async function applyCurrentBatchAIItem() {
+    const item = getCurrentBatchAIItem();
+    if (!item || item.status !== 'generated' || batchAIState.isGenerating || batchAIState.isApplying) {
+        return;
+    }
+
+    syncBatchAIInputsToCurrentItem();
+    batchAIState.isApplying = true;
+    renderBatchAIQueue();
+
+    const description = item.applySummary ? item.generatedSummary : (item.novel.description || '');
+    const tagIds = item.applyTags ? item.selectedTagIds : item.originalTagIds;
+
+    try {
+        const res = await api.put(`/api/novels/${item.id}`, {
+            title: item.novel.title,
+            author: item.novel.author,
+            description,
+            file_path: item.novel.file_path,
+            category_id: item.novel.category_id,
+            status: item.novel.status,
+            tag_ids: tagIds
+        });
+
+        if (!res.success) {
+            throw new Error(res.message || '保存失败');
+        }
+
+        item.novel.description = description;
+        item.originalTagIds = [...tagIds];
+        item.novel.tags = state.tags
+            .filter(tag => tagIds.includes(tag.id))
+            .map(tag => ({ id: tag.id, name: tag.name, color: tag.color }));
+        item.status = 'applied';
+
+        const stateNovel = state.novels.find(novel => novel.id === item.id);
+        if (stateNovel) {
+            stateNovel.description = description;
+            stateNovel.tags = item.novel.tags.map(tag => ({ ...tag }));
+        }
+
+        batchAIState.isApplying = false;
+        await advanceBatchAIQueue();
+    } catch (err) {
+        batchAIState.isApplying = false;
+        item.status = 'generated';
+        item.error = err.message;
+        renderBatchAIQueue();
+        showToast(`《${item.novel.title}》保存失败：${err.message}`, 'error');
+        return;
+    }
+}
+
 // 事件绑定
 function bindEvents() {
     // 导航切换
@@ -1798,6 +2178,8 @@ function bindEvents() {
         openBatchModal('status');
     });
 
+    document.getElementById('btn-batch-ai-meta').addEventListener('click', openBatchAIModal);
+
     document.getElementById('btn-batch-delete').addEventListener('click', batchDeleteNovels);
 
     document.getElementById('btn-batch-clear').addEventListener('click', clearBatchSelection);
@@ -1811,6 +2193,16 @@ function bindEvents() {
 
     // 执行批量操作
     document.getElementById('btn-execute-batch').addEventListener('click', executeBatchAction);
+
+    // 批量 AI 队列操作
+    document.getElementById('btn-batch-ai-regenerate').addEventListener('click', () => {
+        processCurrentBatchAIItem(true);
+    });
+    document.getElementById('btn-batch-ai-skip').addEventListener('click', skipCurrentBatchAIItem);
+    document.getElementById('btn-batch-ai-apply-next').addEventListener('click', applyCurrentBatchAIItem);
+    document.getElementById('batch-ai-generated-summary').addEventListener('input', syncBatchAIInputsToCurrentItem);
+    document.getElementById('batch-ai-apply-summary').addEventListener('change', syncBatchAIInputsToCurrentItem);
+    document.getElementById('batch-ai-apply-tags').addEventListener('change', syncBatchAIInputsToCurrentItem);
 
     // ==================== 批量导入事件绑定 ====================
 
