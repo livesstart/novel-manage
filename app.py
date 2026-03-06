@@ -1020,7 +1020,7 @@ def check_novel_file(novel_id):
 
 # ==================== AI 配置 API ====================
 
-from ai_client import AIConfig, AIClientFactory, get_ai_client
+from ai_client import AIConfig, AIClientFactory, get_ai_client, get_native_gemini_client, is_gemini_compatible_config
 
 AI_TAG_COLOR_PALETTE = [
     '#6366f1', '#8b5cf6', '#06b6d4', '#14b8a6',
@@ -1256,6 +1256,90 @@ def build_novel_ai_messages(title, author, category_name, description, existing_
     ]
 
 
+def build_novel_ai_request_context(data):
+    """构建小说 AI 元数据请求上下文。"""
+    payload = data or {}
+    novel_id = payload.get('novel_id')
+    base_novel = get_novel_detail_record(novel_id) if novel_id else None
+
+    title = (payload.get('title') or (base_novel or {}).get('title') or '').strip()
+    author = (payload.get('author') or (base_novel or {}).get('author') or '').strip()
+    description = (payload.get('description') or (base_novel or {}).get('description') or '').strip()
+    file_path = (payload.get('file_path') or (base_novel or {}).get('file_path') or '').strip()
+    category_id = payload.get('category_id')
+    category_name = (payload.get('category_name') or '').strip()
+
+    if not category_name:
+        if category_id:
+            category_name = get_category_name_by_id(category_id)
+        elif base_novel:
+            category_name = (base_novel.get('category_name') or '').strip()
+
+    tag_ids = payload.get('tag_ids')
+    if tag_ids is None and base_novel:
+        tag_ids = [tag['id'] for tag in base_novel.get('tags', [])]
+
+    existing_tags = get_tag_names_by_ids(tag_ids or [])
+    if not existing_tags and base_novel:
+        existing_tags = [tag['name'] for tag in base_novel.get('tags', [])]
+
+    content_excerpt = (payload.get('content_excerpt') or '').strip()
+    if not content_excerpt:
+        content_excerpt = extract_text_excerpt(file_path)
+
+    return {
+        'novel_id': novel_id,
+        'base_novel': base_novel,
+        'title': title,
+        'author': author,
+        'description': description,
+        'file_path': file_path,
+        'category_id': category_id,
+        'category_name': category_name,
+        'tag_ids': tag_ids or [],
+        'existing_tags': existing_tags,
+        'content_excerpt': content_excerpt,
+    }
+
+
+def build_novel_ai_messages_from_context(context):
+    """从小说 AI 请求上下文构建消息。"""
+    return build_novel_ai_messages(
+        title=context.get('title', ''),
+        author=context.get('author', ''),
+        category_name=context.get('category_name', ''),
+        description=context.get('description', ''),
+        existing_tags=context.get('existing_tags', []),
+        content_excerpt=context.get('content_excerpt', '')
+    )
+
+
+def should_fetch_gemini_safety_feedback(error_message):
+    """判断当前错误是否值得额外请求 Gemini 原生安全反馈。"""
+    normalized = (error_message or '').strip().lower()
+    if not normalized:
+        return False
+
+    keywords = (
+        '内容策略', '未返回内容', '空消息',
+        'content_filter', 'prohibited_content', 'safety'
+    )
+    return any(keyword in normalized for keyword in keywords)
+
+
+def collect_novel_metadata_safety_feedback(messages, config=None):
+    """使用 Gemini 原生接口获取官方安全反馈。"""
+    native_client = get_native_gemini_client(config)
+    if not native_client:
+        return None
+
+    feedback = native_client.get_safety_feedback(messages)
+    if not feedback:
+        return None
+
+    return feedback
+
+
 def build_ai_test_config(data):
     """根据表单数据构建可测试的 AI 配置，支持未保存配置。"""
     payload = data or {}
@@ -1458,65 +1542,61 @@ def ai_chat():
         return jsonify({'success': False, 'message': str(e)}), 500
 
 
-@app.route('/api/ai/novels/metadata', methods=['POST'])
-def generate_novel_metadata():
-    """使用 AI 为小说生成简介和标签。"""
+@app.route('/api/ai/novels/metadata/feedback', methods=['POST'])
+def get_novel_metadata_feedback():
+    """Use Gemini native API to fetch official safety feedback for metadata generation."""
     data = request.get_json(silent=True) or {}
-    novel_id = data.get('novel_id')
-    base_novel = get_novel_detail_record(novel_id) if novel_id else None
+    context = build_novel_ai_request_context(data)
 
-    title = (data.get('title') or (base_novel or {}).get('title') or '').strip()
-    author = (data.get('author') or (base_novel or {}).get('author') or '').strip()
-    description = (data.get('description') or (base_novel or {}).get('description') or '').strip()
-    file_path = (data.get('file_path') or (base_novel or {}).get('file_path') or '').strip()
-    category_id = data.get('category_id')
-    category_name = (data.get('category_name') or '').strip()
+    if not context['title'] and not context['description'] and not context['content_excerpt']:
+        return jsonify({'success': False, 'message': '\u8bf7\u5148\u586b\u5199\u4e66\u540d\uff0c\u6216\u63d0\u4f9b\u53ef\u8bfb\u53d6\u7684\u6587\u672c\u5185\u5bb9'}), 400
 
-    if not category_name:
-        if category_id:
-            category_name = get_category_name_by_id(category_id)
-        elif base_novel:
-            category_name = (base_novel.get('category_name') or '').strip()
+    active_config = AIConfig.get_active_config()
+    if not is_gemini_compatible_config(active_config):
+        return jsonify({'success': False, 'message': '\u5f53\u524d\u6fc0\u6d3b\u914d\u7f6e\u4e0d\u662f Gemini\uff0c\u65e0\u6cd5\u83b7\u53d6\u5b98\u65b9\u5b89\u5168\u53cd\u9988'}), 400
 
-    tag_ids = data.get('tag_ids')
-    if tag_ids is None and base_novel:
-        tag_ids = [tag['id'] for tag in base_novel.get('tags', [])]
-    existing_tags = get_tag_names_by_ids(tag_ids or [])
-    if not existing_tags and base_novel:
-        existing_tags = [tag['name'] for tag in base_novel.get('tags', [])]
-
-    content_excerpt = (data.get('content_excerpt') or '').strip()
-    if not content_excerpt:
-        content_excerpt = extract_text_excerpt(file_path)
-
-    if not title and not description and not content_excerpt:
-        return jsonify({'success': False, 'message': '请先填写书名，或提供可读取的文本内容'}), 400
-
-    client = get_ai_client()
-    if not client:
-        return jsonify({'success': False, 'message': '请先在 AI 配置中激活可用模型'}), 400
+    messages = build_novel_ai_messages_from_context(context)
 
     try:
-        messages = build_novel_ai_messages(
-            title=title,
-            author=author,
-            category_name=category_name,
-            description=description,
-            existing_tags=existing_tags,
-            content_excerpt=content_excerpt
-        )
+        feedback = collect_novel_metadata_safety_feedback(messages, active_config)
+        if not feedback:
+            return jsonify({'success': False, 'message': 'Gemini \u539f\u751f\u63a5\u53e3\u672a\u8fd4\u56de\u5b89\u5168\u53cd\u9988'}), 500
+        return jsonify({'success': True, 'data': feedback})
+    except (ValueError, RuntimeError) as e:
+        return jsonify({'success': False, 'message': str(e)}), 422
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@app.route('/api/ai/novels/metadata', methods=['POST'])
+def generate_novel_metadata():
+    """Use AI to generate novel summary and tags."""
+    data = request.get_json(silent=True) or {}
+    context = build_novel_ai_request_context(data)
+
+    if not context['title'] and not context['description'] and not context['content_excerpt']:
+        return jsonify({'success': False, 'message': '\u8bf7\u5148\u586b\u5199\u4e66\u540d\uff0c\u6216\u63d0\u4f9b\u53ef\u8bfb\u53d6\u7684\u6587\u672c\u5185\u5bb9'}), 400
+
+    active_config = AIConfig.get_active_config()
+    client = get_ai_client()
+    if not client:
+        return jsonify({'success': False, 'message': '\u8bf7\u5148\u5728 AI \u914d\u7f6e\u4e2d\u6fc0\u6d3b\u53ef\u7528\u6a21\u578b'}), 400
+
+    messages = build_novel_ai_messages_from_context(context)
+
+    try:
         response_text = client.chat(messages, stream=False)
         response_data = extract_json_object(response_text)
 
         summary = str(response_data.get('summary', '')).strip()
         summary = re.sub(r'\s+', ' ', summary)
-        summary = summary.strip('"“”')
+        summary = summary.strip('\"')
 
         tag_names = normalize_ai_tag_names(response_data.get('tags', []))
         tag_records = ensure_tags_exist(tag_names)
 
         if not summary and not tag_records:
-            return jsonify({'success': False, 'message': 'AI 未生成可用的简介或标签，请重试'}), 500
+            return jsonify({'success': False, 'message': 'AI \u672a\u751f\u6210\u53ef\u7528\u7684\u7b80\u4ecb\u6216\u6807\u7b7e\uff0c\u8bf7\u91cd\u8bd5'}), 500
 
         return jsonify({
             'success': True,
@@ -1524,16 +1604,35 @@ def generate_novel_metadata():
                 'summary': summary,
                 'tags': tag_records,
                 'tag_names': [tag['name'] for tag in tag_records],
-                'used_excerpt': bool(content_excerpt)
+                'used_excerpt': bool(context['content_excerpt'])
             }
         })
     except (ValueError, RuntimeError) as e:
-        return jsonify({'success': False, 'message': str(e)}), 422
+        error_message = str(e)
+        response_payload = {
+            'success': False,
+            'message': error_message
+        }
+
+        if is_gemini_compatible_config(active_config) and should_fetch_gemini_safety_feedback(error_message):
+            try:
+                feedback = collect_novel_metadata_safety_feedback(messages, active_config)
+                if feedback:
+                    response_payload['details'] = {
+                        'safety_feedback': feedback
+                    }
+                    if feedback.get('summary') and feedback['summary'] not in error_message:
+                        response_payload['details']['display_message'] = f"{error_message} | Gemini safety: {feedback['summary']}"
+            except Exception as feedback_error:
+                response_payload['details'] = {
+                    'safety_feedback_error': str(feedback_error)
+                }
+
+        return jsonify(response_payload), 422
     except Exception as e:
         return jsonify({'success': False, 'message': str(e)}), 500
 
 
-# ==================== 批量导入 ====================
 
 def scan_folder(folder_path, create_category_from_folder=True):
     """扫描文件夹中的小说文件

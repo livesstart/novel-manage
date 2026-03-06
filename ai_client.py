@@ -9,6 +9,8 @@ from abc import ABC, abstractmethod
 from typing import Optional, List, Dict, Any, Generator
 
 DATABASE = 'novels.db'
+GEMINI_NATIVE_BASE_URL = 'https://generativelanguage.googleapis.com/v1beta/'
+GEMINI_OPENAI_BASE_URL = 'https://generativelanguage.googleapis.com/v1beta/openai/'
 
 OPENAI_TEXT_MODEL_PREFIXES = ('gpt-', 'o1', 'o3', 'o4', 'chatgpt-')
 COMMON_EXCLUDED_MODEL_KEYWORDS = (
@@ -206,6 +208,170 @@ def _discover_gemini_models(config: Dict[str, Any]) -> List[str]:
             model_names.append(model_name)
 
     return _normalize_model_list(model_names, provider='gemini')
+
+
+def _normalize_native_gemini_base_url(api_base: Optional[str]) -> str:
+    """将 Gemini OpenAI 兼容地址转换为原生 Gemini API 地址。"""
+    base = (api_base or GEMINI_NATIVE_BASE_URL).strip()
+    if not base:
+        return GEMINI_NATIVE_BASE_URL
+
+    normalized = base.rstrip('/') + '/'
+    normalized = normalized.replace('/v1beta/openai/', '/v1beta/')
+    normalized = normalized.replace('/v1alpha/openai/', '/v1alpha/')
+
+    if normalized.endswith('/openai/'):
+        normalized = normalized[:-7]
+
+    return normalized.rstrip('/') + '/'
+
+
+def is_gemini_compatible_config(config: Optional[Dict[str, Any]]) -> bool:
+    """判断配置是否可派生为原生 Gemini 客户端。"""
+    if not isinstance(config, dict):
+        return False
+
+    provider = str(config.get('provider') or '').strip().lower()
+    if provider in ('gemini', 'gemini-native'):
+        return True
+
+    api_base = str(config.get('api_base') or '').strip().lower()
+    return 'generativelanguage.googleapis.com' in api_base
+
+
+def build_native_gemini_config(config: Dict[str, Any]) -> Dict[str, Any]:
+    """基于现有配置派生 Gemini 原生 API 配置。"""
+    native_config = dict(config or {})
+    native_config['provider'] = 'gemini-native'
+    native_config['api_base'] = _normalize_native_gemini_base_url(native_config.get('api_base'))
+    return native_config
+
+
+def _convert_openai_messages_to_gemini_payload(messages: List[Dict[str, str]]) -> Dict[str, Any]:
+    """将 OpenAI 风格消息转换为 Gemini generateContent 请求结构。"""
+    system_parts = []
+    contents = []
+
+    for msg in messages or []:
+        if not isinstance(msg, dict):
+            continue
+
+        role = str(msg.get('role') or 'user').strip().lower()
+        content = msg.get('content')
+        if isinstance(content, list):
+            text = ''.join(str(item.get('text') or item) for item in content if item)
+        else:
+            text = str(content or '')
+
+        text = text.strip()
+        if not text:
+            continue
+
+        if role == 'system':
+            system_parts.append({'text': text})
+            continue
+
+        gemini_role = 'model' if role == 'assistant' else 'user'
+        contents.append({
+            'role': gemini_role,
+            'parts': [{'text': text}]
+        })
+
+    payload = {
+        'contents': contents or [{'role': 'user', 'parts': [{'text': 'Hello'}]}]
+    }
+    if system_parts:
+        payload['systemInstruction'] = {'parts': system_parts}
+    return payload
+
+
+def _normalize_gemini_safety_ratings(ratings: Any) -> List[Dict[str, Any]]:
+    """标准化 Gemini 安全评级。"""
+    normalized = []
+    for item in ratings or []:
+        if not isinstance(item, dict):
+            continue
+        normalized.append({
+            'category': item.get('category') or '',
+            'probability': item.get('probability') or '',
+            'severity': item.get('severity') or '',
+            'blocked': bool(item.get('blocked'))
+        })
+    return normalized
+
+
+def _build_gemini_safety_feedback(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """从 Gemini 原生响应中提取安全反馈摘要。"""
+    payload = payload if isinstance(payload, dict) else {}
+    prompt_feedback = payload.get('promptFeedback') or {}
+    candidates = payload.get('candidates') or []
+    candidate = candidates[0] if candidates and isinstance(candidates[0], dict) else {}
+
+    prompt_ratings = _normalize_gemini_safety_ratings(prompt_feedback.get('safetyRatings'))
+    candidate_ratings = _normalize_gemini_safety_ratings(candidate.get('safetyRatings'))
+
+    block_reason = str(prompt_feedback.get('blockReason') or '').strip()
+    block_reason_message = str(prompt_feedback.get('blockReasonMessage') or '').strip()
+    finish_reason = str(candidate.get('finishReason') or '').strip()
+    blocked = bool(
+        block_reason
+        or finish_reason == 'SAFETY'
+        or any(item.get('blocked') for item in prompt_ratings + candidate_ratings)
+    )
+
+    summary_parts = []
+    if block_reason:
+        summary_parts.append(f'提示词拦截：{block_reason}')
+    if block_reason_message:
+        summary_parts.append(block_reason_message)
+    if finish_reason and finish_reason != 'STOP':
+        summary_parts.append(f'候选结束原因：{finish_reason}')
+
+    blocked_prompt = [item for item in prompt_ratings if item.get('blocked')]
+    blocked_candidate = [item for item in candidate_ratings if item.get('blocked')]
+
+    if blocked_prompt:
+        summary_parts.append('提示词风险：' + '、'.join(
+            f"{item['category']}({item['probability'] or 'UNKNOWN'})" for item in blocked_prompt
+        ))
+
+    if blocked_candidate:
+        summary_parts.append('候选风险：' + '、'.join(
+            f"{item['category']}({item['probability'] or 'UNKNOWN'})" for item in blocked_candidate
+        ))
+
+    if not summary_parts and blocked:
+        summary_parts.append('Gemini 原生接口判定该请求触发了安全限制')
+
+    return {
+        'blocked': blocked,
+        'block_reason': block_reason,
+        'block_reason_message': block_reason_message,
+        'finish_reason': finish_reason,
+        'prompt_ratings': prompt_ratings,
+        'candidate_ratings': candidate_ratings,
+        'summary': '；'.join(summary_parts)
+    }
+
+
+def _extract_native_gemini_text(payload: Dict[str, Any]) -> str:
+    """从 Gemini 原生响应中提取文本，并在无文本时给出明确原因。"""
+    if not isinstance(payload, dict):
+        raise RuntimeError('Gemini 返回数据格式无效')
+
+    feedback = _build_gemini_safety_feedback(payload)
+    candidates = payload.get('candidates') or []
+    candidate = candidates[0] if candidates and isinstance(candidates[0], dict) else {}
+    parts = ((candidate.get('content') or {}).get('parts') or [])
+    text = ''.join(str(part.get('text') or '') for part in parts if isinstance(part, dict)).strip()
+
+    if text:
+        return text
+
+    if feedback.get('summary'):
+        raise RuntimeError(feedback['summary'])
+
+    raise RuntimeError('Gemini 原生接口未返回文本内容')
 
 
 def _discover_claude_models(config: Dict[str, Any]) -> List[str]:
@@ -613,7 +779,7 @@ class OllamaClient(BaseAIClient):
 class GeminiClient(BaseAIClient):
     """Google Gemini ?????? Google AI Studio OpenAI ?????"""
 
-    DEFAULT_BASE_URL = 'https://generativelanguage.googleapis.com/v1beta/openai/'
+    DEFAULT_BASE_URL = GEMINI_OPENAI_BASE_URL
 
     def __init__(self, config: Dict[str, Any]):
         super().__init__(config)
@@ -781,6 +947,98 @@ class OpenAICompatibleClient(BaseAIClient):
             return False, str(exc)
 
 
+class GeminiNativeClient(BaseAIClient):
+    """Google Gemini 原生 API 客户端，用于获取官方安全反馈。"""
+
+    DEFAULT_BASE_URL = GEMINI_NATIVE_BASE_URL
+
+    def __init__(self, config: Dict[str, Any]):
+        super().__init__(config)
+        self.api_base = _normalize_native_gemini_base_url(self.api_base or self.DEFAULT_BASE_URL)
+
+    def _build_generation_config(self, *, force_small_output: bool = False) -> Dict[str, Any]:
+        max_output_tokens = self.max_tokens
+        if force_small_output:
+            max_output_tokens = min(max(int(self.max_tokens or 32), 8), 64)
+
+        return {
+            'temperature': self.temperature,
+            'maxOutputTokens': max_output_tokens,
+        }
+
+    def _request_generate_content(
+        self,
+        messages: List[Dict[str, str]],
+        *,
+        safety_settings: Optional[List[Dict[str, Any]]] = None,
+        force_small_output: bool = False
+    ):
+        import requests
+
+        url = f"{self.api_base}models/{self.model}:generateContent"
+        payload = _convert_openai_messages_to_gemini_payload(messages)
+        payload['generationConfig'] = self._build_generation_config(force_small_output=force_small_output)
+
+        if safety_settings:
+            payload['safetySettings'] = safety_settings
+
+        response = requests.post(
+            url,
+            params={'key': self.api_key},
+            headers={'Content-Type': 'application/json'},
+            json=payload,
+            timeout=(10, 60)
+        )
+        response.raise_for_status()
+        return response
+
+    def get_safety_feedback(
+        self,
+        messages: List[Dict[str, str]],
+        *,
+        safety_settings: Optional[List[Dict[str, Any]]] = None
+    ) -> Dict[str, Any]:
+        response = self._request_generate_content(messages, safety_settings=safety_settings)
+        payload = response.json()
+        feedback = _build_gemini_safety_feedback(payload)
+        feedback['model'] = self.model
+        feedback['model_version'] = payload.get('modelVersion') or ''
+        feedback['usage_metadata'] = payload.get('usageMetadata') or {}
+        return feedback
+
+    def chat(self, messages: List[Dict[str, str]], stream: bool = False):
+        """发送聊天请求。"""
+        if stream:
+            raise RuntimeError('Gemini 原生客户端暂不支持流式输出')
+
+        response = self._request_generate_content(messages)
+        result = response.json()
+        return _extract_native_gemini_text(result)
+
+    def test_connection(self) -> tuple:
+        """测试连接。"""
+        import requests
+
+        try:
+            response = self._request_generate_content(
+                [{'role': 'user', 'content': 'Hello'}],
+                force_small_output=True,
+            )
+            result = response.json()
+            text = _extract_native_gemini_text(result)
+            if text:
+                return True, '连接成功'
+            return False, 'Gemini 原生接口已响应，但未返回可用内容'
+        except requests.HTTPError as exc:
+            try:
+                error_data = exc.response.json()
+                return False, json.dumps(error_data, ensure_ascii=False)
+            except Exception:
+                return False, exc.response.text or str(exc)
+        except Exception as exc:
+            return False, str(exc)
+
+
 class AIClientFactory:
     """AI 客户端工厂"""
 
@@ -789,6 +1047,7 @@ class AIClientFactory:
         'claude': ClaudeClient,
         'ollama': OllamaClient,
         'gemini': GeminiClient,
+        'gemini-native': GeminiNativeClient,
         'openai-compatible': OpenAICompatibleClient,
     }
 
@@ -813,7 +1072,7 @@ class AIClientFactory:
                 models = _discover_openai_models(config)
             elif provider == 'openai-compatible':
                 models = _discover_openai_compatible_models(config)
-            elif provider == 'gemini':
+            elif provider in ('gemini', 'gemini-native'):
                 models = _discover_gemini_models(config)
             elif provider == 'claude':
                 models = _discover_claude_models(config)
@@ -836,6 +1095,7 @@ class AIClientFactory:
             {'id': 'openai-compatible', 'name': 'OpenAI 兼容 API', 'models': ['qwen-turbo', 'qwen-plus', 'deepseek-chat', 'moonshot-v1-8k', 'gemini-2.5-flash', 'gemini-3-pro-preview']},
             {'id': 'claude', 'name': 'Claude (Anthropic)', 'models': ['claude-3-opus-20240229', 'claude-3-sonnet-20240229', 'claude-3-haiku-20240307']},
             {'id': 'gemini', 'name': 'Google Gemini', 'models': ['gemini-2.5-flash', 'gemini-3-pro-preview', 'gemini-2.0-flash']},
+            {'id': 'gemini-native', 'name': 'Google Gemini（原生）', 'models': ['gemini-2.5-flash', 'gemini-3-pro-preview', 'gemini-2.0-flash']},
             {'id': 'ollama', 'name': 'Ollama (本地)', 'models': ['llama2', 'llama3', 'mistral', 'qwen', 'phi3']},
         ]
 
@@ -858,6 +1118,22 @@ def get_ai_client() -> Optional[BaseAIClient]:
         return AIClientFactory.create_client(config)
     except Exception as e:
         print(f"创建 AI 客户端失败: {e}")
+        return None
+
+
+def get_native_gemini_client(config: Optional[Dict[str, Any]] = None) -> Optional[GeminiNativeClient]:
+    """获取 Gemini 原生客户端；如当前是 Gemini 兼容配置，会自动派生。"""
+    target_config = dict(config or AIConfig.get_active_config() or {})
+    if not target_config or not is_gemini_compatible_config(target_config):
+        return None
+
+    if not target_config.get('api_key'):
+        return None
+
+    try:
+        return GeminiNativeClient(build_native_gemini_config(target_config))
+    except Exception as exc:
+        print(f"创建 Gemini 原生客户端失败: {exc}")
         return None
 
 

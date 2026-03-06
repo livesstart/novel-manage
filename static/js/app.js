@@ -363,6 +363,37 @@ async function readLocalNovelExcerpt() {
     }
 }
 
+function formatAISafetyFeedback(details) {
+    const feedback = details?.safety_feedback;
+    if (!feedback) {
+        return '';
+    }
+
+    if (feedback.summary) {
+        return feedback.summary;
+    }
+
+    const parts = [];
+    if (feedback.block_reason) {
+        parts.push(`提示词拦截：${feedback.block_reason}`);
+    }
+    if (feedback.finish_reason && feedback.finish_reason !== 'STOP') {
+        parts.push(`结束原因：${feedback.finish_reason}`);
+    }
+    return parts.join('；');
+}
+
+function buildAIErrorMessage(res, fallback = 'AI 生成失败') {
+    const baseMessage = res?.details?.display_message || res?.message || fallback;
+    const safetyMessage = formatAISafetyFeedback(res?.details);
+
+    if (!safetyMessage || baseMessage.includes(safetyMessage)) {
+        return baseMessage;
+    }
+
+    return `${baseMessage}；${safetyMessage}`;
+}
+
 async function generateNovelMetadataWithAI() {
     const title = document.getElementById('novel-title').value.trim();
     const description = document.getElementById('novel-description').value.trim();
@@ -394,7 +425,7 @@ async function generateNovelMetadataWithAI() {
         });
 
         if (!res.success) {
-            showToast(res.message || 'AI 生成失败', 'error');
+            showToast(buildAIErrorMessage(res), 'error');
             return;
         }
 
@@ -1045,6 +1076,11 @@ const providerModels = {
         defaultModel: 'gemini-2.5-flash',
         models: ['gemini-2.5-flash', 'gemini-3-pro-preview', 'gemini-2.0-flash']
     },
+    'gemini-native': {
+        hint: '原生 Gemini API：支持官方 safety feedback，适合排查内容拦截',
+        defaultModel: 'gemini-2.5-flash',
+        models: ['gemini-2.5-flash', 'gemini-3-pro-preview', 'gemini-2.0-flash']
+    },
     ollama: {
         hint: '本地模型：llama2, llama3, mistral, qwen, phi3 等',
         defaultModel: 'llama3',
@@ -1158,7 +1194,7 @@ function renderAIConfigs() {
     const container = document.getElementById('ai-config-list');
 
     // 检查是否有 Gemini 配置，显示代理提示
-    const hasGemini = aiConfigState.configs.some(c => c.provider === 'gemini');
+    const hasGemini = aiConfigState.configs.some(c => ['gemini', 'gemini-native'].includes(c.provider));
     const proxyHint = document.getElementById('gemini-proxy-hint');
     if (proxyHint) {
         proxyHint.style.display = hasGemini ? 'flex' : 'none';
@@ -1222,6 +1258,7 @@ function getProviderIcon(provider) {
         'openai-compatible': 'plug',
         claude: 'feather-alt',
         gemini: 'sparkles',
+        'gemini-native': 'shield-halved',
         ollama: 'server'
     };
     return icons[provider] || 'robot';
@@ -1261,7 +1298,7 @@ function updateProviderHint(provider) {
     // 显示/隐藏 Gemini 代理提示
     const proxyHint = document.getElementById('gemini-proxy-hint');
     if (proxyHint) {
-        proxyHint.style.display = provider === 'gemini' ? 'flex' : 'none';
+        proxyHint.style.display = ['gemini', 'gemini-native'].includes(provider) ? 'flex' : 'none';
     }
 }
 
@@ -1955,7 +1992,7 @@ async function processCurrentBatchAIItem(force = false) {
     try {
         const res = await api.post('/api/ai/novels/metadata', { novel_id: item.id });
         if (!res.success) {
-            throw new Error(res.message || 'AI 生成失败');
+            throw new Error(buildAIErrorMessage(res));
         }
 
         await loadTags();
