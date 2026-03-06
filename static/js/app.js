@@ -1,4 +1,4 @@
-/**
+﻿/**
  * 本地小说管理器 - 前端应用
  */
 
@@ -31,6 +31,13 @@ const api = {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(data)
+        });
+        return res.json();
+    },
+    async postForm(url, formData) {
+        const res = await fetch(url, {
+            method: 'POST',
+            body: formData
         });
         return res.json();
     },
@@ -313,6 +320,99 @@ function toggleNovelTag(element, tagId) {
     element.classList.toggle('selected');
 }
 
+function getSelectedNovelTagIds() {
+    return Array.from(document.querySelectorAll('#novel-tag-selector .tag-option.selected'))
+        .map(el => parseInt(el.dataset.id, 10))
+        .filter(Number.isInteger);
+}
+
+function setNovelTagSelection(tagIds = []) {
+    const selectedTagIds = new Set((tagIds || []).map(tagId => parseInt(tagId, 10)).filter(Number.isInteger));
+    document.querySelectorAll('#novel-tag-selector .tag-option').forEach(el => {
+        const tagId = parseInt(el.dataset.id, 10);
+        el.classList.toggle('selected', selectedTagIds.has(tagId));
+    });
+}
+
+async function readLocalNovelExcerpt() {
+    const file = document.getElementById('file-input').files[0];
+    if (!file) {
+        return '';
+    }
+
+    const lowerName = file.name.toLowerCase();
+    const canReadAsText = lowerName.endsWith('.txt') || file.type.startsWith('text/');
+    if (!canReadAsText) {
+        return '';
+    }
+
+    try {
+        const blob = file.slice(0, 16000);
+        const text = await blob.text();
+        return text.slice(0, 4000).trim();
+    } catch (err) {
+        console.warn('读取本地小说片段失败:', err);
+        return '';
+    }
+}
+
+async function generateNovelMetadataWithAI() {
+    const title = document.getElementById('novel-title').value.trim();
+    const description = document.getElementById('novel-description').value.trim();
+    const rawFilePath = document.getElementById('novel-file-path').value.trim();
+    const filePath = rawFilePath.startsWith('待上传：') ? '' : rawFilePath;
+
+    if (!title && !description && !filePath && !document.getElementById('file-input').files[0]) {
+        showToast('请先填写书名，或选择一个可分析的小说文件', 'error');
+        return;
+    }
+
+    const actionButton = document.getElementById('btn-ai-generate-novel-meta');
+    const originalHtml = actionButton.innerHTML;
+    actionButton.disabled = true;
+    actionButton.innerHTML = '<span class="loading"></span> AI 生成中';
+
+    try {
+        const selectedTagIds = getSelectedNovelTagIds();
+        const localExcerpt = await readLocalNovelExcerpt();
+        const res = await api.post('/api/ai/novels/metadata', {
+            novel_id: state.editingNovel ? state.editingNovel.id : null,
+            title,
+            author: document.getElementById('novel-author').value.trim(),
+            description,
+            file_path: filePath,
+            category_id: document.getElementById('novel-category').value || null,
+            tag_ids: selectedTagIds,
+            content_excerpt: localExcerpt
+        });
+
+        if (!res.success) {
+            showToast(res.message || 'AI 生成失败', 'error');
+            return;
+        }
+
+        const generatedSummary = res.data.summary || '';
+        const generatedTagIds = (res.data.tags || []).map(tag => tag.id);
+        const mergedTagIds = Array.from(new Set([...selectedTagIds, ...generatedTagIds]));
+
+        if (generatedSummary) {
+            document.getElementById('novel-description').value = generatedSummary;
+        }
+
+        await loadTags();
+        setNovelTagSelection(mergedTagIds);
+
+        const tagCount = generatedTagIds.length;
+        showToast(`AI 已补全简介，并匹配 ${tagCount} 个标签`, 'success');
+    } catch (err) {
+        console.error('AI 生成小说元数据失败:', err);
+        showToast('AI 生成失败: ' + err.message, 'error');
+    } finally {
+        actionButton.disabled = false;
+        actionButton.innerHTML = originalHtml;
+    }
+}
+
 // 应用筛选
 function applyFilters() {
     const keyword = document.getElementById('search-input').value;
@@ -564,6 +664,25 @@ async function downloadNovel(novelId) {
 }
 
 // 添加小说
+async function uploadSelectedNovelFile() {
+    const fileInput = document.getElementById('file-input');
+    const file = fileInput.files[0];
+    if (!file) {
+        return null;
+    }
+
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('relative_path', file.name);
+
+    const res = await api.postForm('/api/files/upload', formData);
+    if (!res.success) {
+        throw new Error(res.message || '文件上传失败');
+    }
+
+    return res.data.file_path;
+}
+
 async function saveNovel() {
     const title = document.getElementById('novel-title').value.trim();
     if (!title) {
@@ -578,11 +697,15 @@ async function saveNovel() {
         file_path: document.getElementById('novel-file-path').value.trim(),
         category_id: document.getElementById('novel-category').value || null,
         status: parseInt(document.getElementById('novel-status').value),
-        tag_ids: Array.from(document.querySelectorAll('#novel-tag-selector .tag-option.selected'))
-            .map(el => parseInt(el.dataset.id))
+        tag_ids: getSelectedNovelTagIds()
     };
 
     try {
+        const uploadedPath = await uploadSelectedNovelFile();
+        if (uploadedPath) {
+            data.file_path = uploadedPath;
+        }
+
         let res;
         if (state.editingNovel) {
             res = await api.put(`/api/novels/${state.editingNovel.id}`, data);
@@ -591,6 +714,7 @@ async function saveNovel() {
         }
 
         if (res.success) {
+            document.getElementById('file-input').value = '';
             closeModal('novel-modal');
             await Promise.all([loadNovels(), loadStats()]);
             showToast(state.editingNovel ? '小说已更新' : '小说已添加', 'success');
@@ -599,11 +723,10 @@ async function saveNovel() {
         }
     } catch (err) {
         console.error('保存小说失败:', err);
-        showToast('保存失败', 'error');
+        showToast('保存失败: ' + err.message, 'error');
     }
 }
 
-// 编辑小说
 function editNovel(novelId) {
     const novel = state.novels.find(n => n.id === novelId);
     if (!novel) return;
@@ -618,20 +741,13 @@ function editNovel(novelId) {
     document.getElementById('novel-file-path').value = novel.file_path || '';
     document.getElementById('novel-category').value = novel.category_id || '';
     document.getElementById('novel-status').value = novel.status;
+    document.getElementById('file-input').value = '';
 
-    // 设置已选标签
-    document.querySelectorAll('#novel-tag-selector .tag-option').forEach(el => {
-        el.classList.remove('selected');
-        const tagId = parseInt(el.dataset.id);
-        if (novel.tags && novel.tags.some(t => t.id === tagId)) {
-            el.classList.add('selected');
-        }
-    });
+    setNovelTagSelection((novel.tags || []).map(tag => tag.id));
 
     openModal('novel-modal');
 }
 
-// 删除小说
 async function deleteNovel(novelId) {
     if (!confirm('确定要删除这本小说吗？')) return;
 
@@ -798,9 +914,8 @@ function resetNovelModal() {
     document.getElementById('novel-modal-title').textContent = '添加小说';
     document.getElementById('novel-form').reset();
     document.getElementById('novel-id').value = '';
-    document.querySelectorAll('#novel-tag-selector .tag-option').forEach(el => {
-        el.classList.remove('selected');
-    });
+    document.getElementById('file-input').value = '';
+    setNovelTagSelection([]);
 }
 
 function resetCategoryModal() {
@@ -897,32 +1012,115 @@ const aiConfigState = {
     configs: [],
     providers: [],
     editingConfig: null,
-    activeConfigId: null
+    activeConfigId: null,
+    discoveredModels: []
 };
 
 // 提供商模型提示
 const providerModels = {
     openai: {
         hint: '常用模型：gpt-3.5-turbo, gpt-4, gpt-4-turbo, gpt-4o',
-        defaultModel: 'gpt-3.5-turbo'
+        defaultModel: 'gpt-3.5-turbo',
+        models: ['gpt-3.5-turbo', 'gpt-4', 'gpt-4-turbo', 'gpt-4o']
     },
     'openai-compatible': {
-        hint: '阿里：qwen-turbo, qwen-plus, qwen-max | 月之暗面：moonshot-v1-8k, moonshot-v1-32k | DeepSeek：deepseek-chat',
-        defaultModel: 'qwen-turbo'
+        hint: '阿里：qwen-turbo, qwen-plus | 月之暗面：moonshot-v1-8k | DeepSeek：deepseek-chat | Google AI Studio：gemini-2.5-flash, gemini-3-pro-preview',
+        defaultModel: 'qwen-turbo',
+        models: ['qwen-turbo', 'qwen-plus', 'deepseek-chat', 'moonshot-v1-8k', 'gemini-2.5-flash', 'gemini-3-pro-preview']
     },
     claude: {
         hint: '常用模型：claude-3-opus-20240229, claude-3-sonnet-20240229, claude-3-haiku-20240307',
-        defaultModel: 'claude-3-haiku-20240307'
+        defaultModel: 'claude-3-haiku-20240307',
+        models: ['claude-3-opus-20240229', 'claude-3-sonnet-20240229', 'claude-3-haiku-20240307']
     },
     gemini: {
-        hint: '常用模型：gemini-pro, gemini-1.5-pro, gemini-1.5-flash',
-        defaultModel: 'gemini-pro'
+        hint: '常用模型：gemini-2.5-flash, gemini-3-pro-preview, gemini-2.0-flash',
+        defaultModel: 'gemini-2.5-flash',
+        models: ['gemini-2.5-flash', 'gemini-3-pro-preview', 'gemini-2.0-flash']
     },
     ollama: {
         hint: '本地模型：llama2, llama3, mistral, qwen, phi3 等',
-        defaultModel: 'llama3'
+        defaultModel: 'llama3',
+        models: ['llama2', 'llama3', 'mistral', 'qwen', 'phi3']
     }
 };
+
+function getProviderPresetModels(provider) {
+    const providerConfig = aiConfigState.providers.find(item => item.id === provider);
+    if (providerConfig?.models?.length) {
+        return providerConfig.models;
+    }
+    return providerModels[provider]?.models || [];
+}
+
+function mergeModelLists(...groups) {
+    const seen = new Set();
+    const merged = [];
+
+    groups.flat().forEach(model => {
+        if (!model || typeof model !== 'string') {
+            return;
+        }
+        const trimmed = model.trim();
+        if (!trimmed) {
+            return;
+        }
+        const lowered = trimmed.toLowerCase();
+        if (seen.has(lowered)) {
+            return;
+        }
+        seen.add(lowered);
+        merged.push(trimmed);
+    });
+
+    return merged;
+}
+
+function setAIModelDiscoveryStatus(message) {
+    document.getElementById('ai-model-discovery-status').textContent = message;
+}
+
+function renderDiscoveredModels(models = [], preferredModel = '') {
+    const select = document.getElementById('ai-discovered-models');
+    const currentModel = preferredModel || document.getElementById('ai-config-model').value.trim();
+    aiConfigState.discoveredModels = mergeModelLists(models, currentModel ? [currentModel] : []);
+
+    if (!aiConfigState.discoveredModels.length) {
+        select.innerHTML = '<option value="">测试连接后，可在这里选择当前接口返回的模型</option>';
+        return;
+    }
+
+    select.innerHTML = [
+        '<option value="">请选择一个模型写入上方输入框</option>',
+        ...aiConfigState.discoveredModels.map(model => `<option value="${escapeHtml(model)}">${escapeHtml(model)}</option>`)
+    ].join('');
+
+    if (currentModel && aiConfigState.discoveredModels.includes(currentModel)) {
+        select.value = currentModel;
+    }
+}
+
+function collectAIConfigFormData() {
+    const id = document.getElementById('ai-config-id').value.trim();
+    const apiKey = document.getElementById('ai-config-api-key').value.trim();
+    const configData = {
+        name: document.getElementById('ai-config-name').value.trim(),
+        provider: document.getElementById('ai-config-provider').value,
+        model: document.getElementById('ai-config-model').value.trim(),
+        api_base: document.getElementById('ai-config-api-base').value.trim(),
+        temperature: parseFloat(document.getElementById('ai-config-temperature').value),
+        max_tokens: parseInt(document.getElementById('ai-config-max-tokens').value, 10)
+    };
+
+    if (id) {
+        configData.id = parseInt(id, 10);
+    }
+    if (apiKey) {
+        configData.api_key = apiKey;
+    }
+
+    return configData;
+}
 
 async function loadAIConfigs() {
     try {
@@ -951,6 +1149,13 @@ async function loadAIProviders() {
 
 function renderAIConfigs() {
     const container = document.getElementById('ai-config-list');
+
+    // 检查是否有 Gemini 配置，显示代理提示
+    const hasGemini = aiConfigState.configs.some(c => c.provider === 'gemini');
+    const proxyHint = document.getElementById('gemini-proxy-hint');
+    if (proxyHint) {
+        proxyHint.style.display = hasGemini ? 'flex' : 'none';
+    }
 
     if (aiConfigState.configs.length === 0) {
         container.innerHTML = `
@@ -1022,11 +1227,14 @@ function resetAIConfigModal() {
     document.getElementById('ai-config-provider').value = 'openai';
     document.getElementById('ai-config-model').value = '';
     document.getElementById('ai-config-api-key').value = '';
+    document.getElementById('ai-config-api-key').placeholder = 'sk-...';
     document.getElementById('ai-config-api-base').value = '';
     document.getElementById('ai-config-temperature').value = '0.7';
     document.getElementById('ai-config-max-tokens').value = '2000';
     document.getElementById('ai-config-modal-title').textContent = '添加 AI 配置';
 
+    renderDiscoveredModels(getProviderPresetModels('openai'));
+    setAIModelDiscoveryStatus('支持手动填写模型，也支持测试连接后自动拉取模型列表');
     updateProviderHint('openai');
 }
 
@@ -1039,19 +1247,21 @@ function updateProviderHint(provider) {
     if (!modelInput.value && defaultModel) {
         modelInput.value = defaultModel;
     }
+
+    renderDiscoveredModels(getProviderPresetModels(provider), modelInput.value);
+    setAIModelDiscoveryStatus('点击“测试连接”后，会刷新为当前接口真正可用的模型');
+
+    // 显示/隐藏 Gemini 代理提示
+    const proxyHint = document.getElementById('gemini-proxy-hint');
+    if (proxyHint) {
+        proxyHint.style.display = provider === 'gemini' ? 'flex' : 'none';
+    }
 }
 
 async function saveAIConfig() {
     const id = document.getElementById('ai-config-id').value;
-    const configData = {
-        name: document.getElementById('ai-config-name').value.trim(),
-        provider: document.getElementById('ai-config-provider').value,
-        model: document.getElementById('ai-config-model').value.trim(),
-        api_key: document.getElementById('ai-config-api-key').value.trim(),
-        api_base: document.getElementById('ai-config-api-base').value.trim(),
-        temperature: parseFloat(document.getElementById('ai-config-temperature').value),
-        max_tokens: parseInt(document.getElementById('ai-config-max-tokens').value)
-    };
+    const apiKey = document.getElementById('ai-config-api-key').value.trim();
+    const configData = collectAIConfigFormData();
 
     if (!configData.name) {
         showToast('请输入配置名称', 'error');
@@ -1061,7 +1271,7 @@ async function saveAIConfig() {
         showToast('请输入模型名称', 'error');
         return;
     }
-    if (configData.provider !== 'ollama' && !configData.api_key) {
+    if (!id && configData.provider !== 'ollama' && !apiKey) {
         showToast('请输入 API Key', 'error');
         return;
     }
@@ -1096,13 +1306,16 @@ async function editAIConfig(id) {
     document.getElementById('ai-config-name').value = config.name;
     document.getElementById('ai-config-provider').value = config.provider;
     document.getElementById('ai-config-model').value = config.model;
-    document.getElementById('ai-config-api-key').value = config.api_key || '';
+    document.getElementById('ai-config-api-key').value = '';
+    document.getElementById('ai-config-api-key').placeholder = config.api_key ? '已保存，留空则保持不变' : 'sk-...';
     document.getElementById('ai-config-api-base').value = config.api_base || '';
     document.getElementById('ai-config-temperature').value = config.temperature;
     document.getElementById('ai-config-max-tokens').value = config.max_tokens;
     document.getElementById('ai-config-modal-title').textContent = '编辑 AI 配置';
 
     updateProviderHint(config.provider);
+    renderDiscoveredModels(getProviderPresetModels(config.provider), config.model);
+    setAIModelDiscoveryStatus('当前可先从推荐模型中选，点击“测试连接”可刷新为接口返回的模型');
     openModal('ai-config-modal');
 }
 
@@ -1144,7 +1357,8 @@ async function testAIConfig(id) {
         showToast('正在测试连接...', 'success');
         const res = await api.post(`/api/ai/configs/${id}/test`);
         if (res.success) {
-            showToast('连接成功', 'success');
+            const modelCount = res.data?.model_count || 0;
+            showToast(modelCount ? `连接成功，已识别 ${modelCount} 个模型` : '连接成功', 'success');
         } else {
             showToast('连接失败: ' + res.message, 'error');
         }
@@ -1155,12 +1369,55 @@ async function testAIConfig(id) {
 }
 
 async function testCurrentAIConfig() {
-    const id = document.getElementById('ai-config-id').value;
-    if (!id) {
-        showToast('请先保存配置', 'error');
+    const configData = collectAIConfigFormData();
+    const requiresApiKey = configData.provider !== 'ollama';
+
+    if (!configData.provider) {
+        showToast('请选择 AI 提供商', 'error');
         return;
     }
-    await testAIConfig(id);
+    if (!configData.model) {
+        showToast('请输入模型名称', 'error');
+        return;
+    }
+    if (!configData.id && requiresApiKey && !configData.api_key) {
+        showToast('请输入 API Key', 'error');
+        return;
+    }
+
+    const testButton = document.getElementById('btn-test-ai-config');
+    const originalHtml = testButton.innerHTML;
+    testButton.disabled = true;
+    testButton.innerHTML = '<span class="loading"></span> 测试中';
+
+    try {
+        const res = await api.post('/api/ai/configs/test', configData);
+        if (res.success) {
+            const discoveredModels = res.data?.models || [];
+            renderDiscoveredModels(discoveredModels, configData.model);
+            setAIModelDiscoveryStatus(
+                discoveredModels.length
+                    ? `已从当前接口获取 ${discoveredModels.length} 个可选模型，可直接在下拉框中选择`
+                    : '连接成功，但接口未返回模型列表，已保留推荐模型'
+            );
+            showToast(
+                discoveredModels.length
+                    ? `连接成功，已获取 ${discoveredModels.length} 个模型`
+                    : '连接成功',
+                'success'
+            );
+        } else {
+            setAIModelDiscoveryStatus('测试失败，请检查 API 地址、Key 和代理设置');
+            showToast('连接失败: ' + res.message, 'error');
+        }
+    } catch (err) {
+        console.error('测试当前 AI 配置失败:', err);
+        setAIModelDiscoveryStatus('测试失败，请检查配置后重试');
+        showToast('测试失败: ' + err.message, 'error');
+    } finally {
+        testButton.disabled = false;
+        testButton.innerHTML = originalHtml;
+    }
 }
 
 // AI 聊天测试功能
@@ -1463,6 +1720,9 @@ function bindEvents() {
     // 保存小说
     document.getElementById('btn-save-novel').addEventListener('click', saveNovel);
 
+    // AI 生成小说简介与标签
+    document.getElementById('btn-ai-generate-novel-meta').addEventListener('click', generateNovelMetadataWithAI);
+
     // 添加分类按钮
     document.getElementById('btn-add-category').addEventListener('click', () => {
         resetCategoryModal();
@@ -1514,7 +1774,7 @@ function bindEvents() {
     document.getElementById('file-input').addEventListener('change', (e) => {
         const file = e.target.files[0];
         if (file) {
-            document.getElementById('novel-file-path').value = file.name;
+            document.getElementById('novel-file-path').value = `待上传：${file.name}`;
         }
     });
 
@@ -1591,10 +1851,12 @@ function bindEvents() {
 
                     state.scannedNovels.push({
                         file_path: relativePath,
+                        relative_path: relativePath,
                         title: title,
                         category_name: categoryName,
                         selected: true,
-                        file_size: file.size
+                        file_size: file.size,
+                        file: file
                     });
                 }
             }
@@ -1707,6 +1969,13 @@ function bindEvents() {
     // 测试 AI 配置
     document.getElementById('btn-test-ai-config').addEventListener('click', testCurrentAIConfig);
 
+    // 选择已发现模型时，同步回模型输入框
+    document.getElementById('ai-discovered-models').addEventListener('change', (e) => {
+        if (e.target.value) {
+            document.getElementById('ai-config-model').value = e.target.value;
+        }
+    });
+
     // 提供商选择变化时更新提示
     document.getElementById('ai-config-provider').addEventListener('change', (e) => {
         updateProviderHint(e.target.value);
@@ -1791,7 +2060,7 @@ function renderScannedNovels() {
     container.innerHTML = state.scannedNovels.map((novel, index) => `
         <div class="import-novel-item">
             <input type="checkbox" ${novel.selected ? 'checked' : ''}
-                   onchange="toggleNovelSelection(${index}, this.checked)">
+                   onchange="toggleImportNovelSelection(${index}, this.checked)">
             <div class="import-novel-info">
                 <div class="import-novel-title">${escapeHtml(novel.title)}</div>
                 <div class="import-novel-meta">${formatFileSize(novel.file_size)} · ${escapeHtml(novel.file_path)}</div>
@@ -1801,7 +2070,7 @@ function renderScannedNovels() {
     `).join('');
 }
 
-function toggleNovelSelection(index, selected) {
+function toggleImportNovelSelection(index, selected) {
     state.scannedNovels[index].selected = selected;
     updateScanStats();
 }
@@ -1840,14 +2109,26 @@ async function executeBatchImport() {
     importBtn.disabled = true;
 
     try {
-        const res = await api.post('/api/import/batch', {
-            novels: selectedNovels.map(n => ({
-                ...n,
-                category_name: createCategories ? n.category_name : null
-            })),
-            tag_ids: tagIds,
-            default_status: defaultStatus
+        const formData = new FormData();
+        const novels = selectedNovels.map(n => ({
+            title: n.title,
+            author: n.author || '',
+            file_path: n.file_path,
+            category_name: createCategories ? n.category_name : null,
+            selected: true,
+            file_size: n.file_size
+        }));
+
+        selectedNovels.forEach(novel => {
+            formData.append('files', novel.file, novel.file.name);
+            formData.append('relative_paths', novel.relative_path || novel.file_path);
         });
+
+        formData.append('novels', JSON.stringify(novels));
+        formData.append('tag_ids', JSON.stringify(tagIds));
+        formData.append('default_status', String(defaultStatus));
+
+        const res = await api.postForm('/api/import/batch', formData);
 
         if (res.success) {
             // 显示导入结果
@@ -1881,3 +2162,4 @@ async function executeBatchImport() {
 
 // 启动应用
 document.addEventListener('DOMContentLoaded', init);
+

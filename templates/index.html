@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
@@ -61,8 +61,38 @@
 
         <!-- 主内容区 -->
         <main class="main-content">
-            <!-- 顶部栏 -->
-            <header class="header">
+            <!-- 内容区域 -->
+            <div class="content-wrapper">
+                <!-- 小说列表视图 -->
+                <div class="view" id="view-novels">
+<div class="top-shell">
+                <section class="hero-panel">
+                    <div class="hero-copy">
+                        <span class="hero-badge">
+                            <i class="fas fa-layer-group"></i>
+                            本地书库工作台
+                        </span>
+                        <h1>更清爽地整理、筛选和阅读你的小说库</h1>
+                        <p>把搜索、批量导入、分类标签筛选和阅读操作收拢到更清晰的工作区，大书库也更容易浏览。</p>
+                    </div>
+                    <div class="hero-highlights">
+                        <div class="hero-highlight">
+                            <span class="hero-highlight-label">高效整理</span>
+                            <strong>批量导入与快速编辑</strong>
+                        </div>
+                        <div class="hero-highlight">
+                            <span class="hero-highlight-label">精准筛选</span>
+                            <strong>分类、标签、状态联动</strong>
+                        </div>
+                        <div class="hero-highlight">
+                            <span class="hero-highlight-label">沉浸阅读</span>
+                            <strong>本地 TXT 即开即读</strong>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- 顶部栏 -->
+                <header class="header">
                 <div class="search-box">
                     <i class="fas fa-search"></i>
                     <input type="text" id="search-input" placeholder="搜索小说名称或作者...">
@@ -104,16 +134,24 @@
                 </div>
             </div>
 
-            <!-- 内容区域 -->
-            <div class="content-wrapper">
-                <!-- 小说列表视图 -->
-                <div class="view" id="view-novels">
+            </div>
+
+            
                     <div class="novels-header">
+                        <div class="novels-heading">
+                            <div class="novels-heading-text">
+                                <span class="section-kicker">书库概览</span>
+                                <h2>小说列表</h2>
+                            </div>
+                            <div class="novels-heading-meta">
+                                <span class="novels-count" id="novels-count">0 本小说</span>
+                                <span class="novels-tip">支持批量勾选、快速阅读和下载</span>
+                            </div>
+                        </div>
                         <label class="novels-select-all">
                             <input type="checkbox" id="select-all-novels-main">
                             <span>全选</span>
                         </label>
-                        <span class="novels-count" id="novels-count">0 本小说</span>
                     </div>
                     <div class="novels-grid" id="novels-grid">
                         <!-- 动态加载小说卡片 -->
@@ -224,6 +262,14 @@
                                     <p>配置 AI 接口后，可在小说阅读时使用 AI 辅助功能，如智能摘要、情节分析、角色关系梳理等。</p>
                                 </div>
                             </div>
+                            <div class="info-card warning" id="gemini-proxy-hint" style="display: none; margin-top: 12px;">
+                                <i class="fas fa-exclamation-triangle"></i>
+                                <div class="info-text">
+                                    <h4>代理设置提示</h4>
+                                    <p>Google Gemini 需要代理才能访问。如需使用 Gemini，请先设置 HTTPS_PROXY 环境变量，然后重启服务。</p>
+                                    <code style="display: block; margin-top: 8px; padding: 8px; background: rgba(0,0,0,0.1); border-radius: 4px;">set HTTPS_PROXY=http://127.0.0.1:7890</code>
+                                </div>
+                            </div>
                         </div>
 
                         <div class="ai-config-list-section">
@@ -323,6 +369,18 @@
                         </div>
                     </div>
                     <div class="form-group">
+                        <div class="ai-assist-bar">
+                            <div class="ai-assist-copy">
+                                <span class="ai-assist-title">AI 辅助补全</span>
+                                <p>根据书名、作者、已有简介和正文片段，自动生成简介与标签。</p>
+                            </div>
+                            <button type="button" class="btn btn-secondary" id="btn-ai-generate-novel-meta">
+                                <i class="fas fa-sparkles"></i>
+                                AI 生成简介和标签
+                            </button>
+                        </div>
+                    </div>
+                    <div class="form-group">
                         <label>标签</label>
                         <div class="tag-selector" id="novel-tag-selector">
                             <!-- 动态加载标签选择 -->
@@ -331,7 +389,7 @@
                     <div class="form-group">
                         <label>文件路径</label>
                         <div class="file-input-group">
-                            <input type="text" id="novel-file-path" placeholder="选择本地小说文件...">
+                            <input type="text" id="novel-file-path" placeholder="手动填写服务器路径，或选择本地文件上传...">
                             <button type="button" class="btn btn-secondary" id="btn-browse-file">
                                 <i class="fas fa-folder-open"></i>
                             </button>
@@ -580,7 +638,7 @@
     </div>
 
     <!-- 文件输入（隐藏） -->
-    <input type="file" id="file-input" accept=".txt,.epub,.pdf,.mobi,.azw3" style="display: none;">
+    <input type="file" id="file-input" accept=".txt,.epub,.pdf,.mobi,.azw3,.doc,.docx,.rtf" style="display: none;">
 
     <!-- 文件夹输入（隐藏） -->
     <input type="file" id="folder-input" webkitdirectory directory multiple style="display: none;">
@@ -614,12 +672,16 @@
                             <label>模型 *</label>
                             <input type="text" id="ai-config-model" placeholder="gpt-3.5-turbo" required>
                             <small class="form-hint" id="ai-model-hint">常用模型：gpt-3.5-turbo, gpt-4, gpt-4-turbo</small>
+                            <select id="ai-discovered-models" class="ai-discovered-models">
+                                <option value="">测试连接后，可在这里选择当前接口返回的模型</option>
+                            </select>
+                            <small class="form-hint" id="ai-model-discovery-status">支持手动填写模型，也支持测试连接后自动拉取模型列表</small>
                         </div>
                     </div>
                     <div class="form-group">
                         <label>API Key</label>
                         <input type="password" id="ai-config-api-key" placeholder="sk-...">
-                        <small class="form-hint">OpenAI 和 Claude 需要提供 API Key，Ollama 可留空</small>
+                        <small class="form-hint">OpenAI 和 Claude 需要提供 API Key，编辑时留空可保持原值，Ollama 可留空</small>
                     </div>
                     <div class="form-group">
                         <label>API Base URL</label>
@@ -718,3 +780,5 @@
     <script src="/static/js/app.js"></script>
 </body>
 </html>
+
+

@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """
 AI 客户端模块 - 支持多种 AI 服务
 """
@@ -9,6 +9,175 @@ from abc import ABC, abstractmethod
 from typing import Optional, List, Dict, Any, Generator
 
 DATABASE = 'novels.db'
+
+OPENAI_TEXT_MODEL_PREFIXES = ('gpt-', 'o1', 'o3', 'o4', 'chatgpt-')
+COMMON_EXCLUDED_MODEL_KEYWORDS = (
+    'embedding', 'rerank', 'moderation', 'whisper',
+    'tts', 'dall-e', 'transcribe', 'speech-to-text'
+)
+
+
+def _normalize_model_list(models: List[str], *, provider: str = '') -> List[str]:
+    """清洗并去重模型列表。"""
+    normalized = []
+    seen = set()
+
+    for model in models or []:
+        if not isinstance(model, str):
+            continue
+
+        model_name = model.strip()
+        if model_name.lower().startswith('models/'):
+            model_name = model_name.split('/', 1)[1]
+        if not model_name:
+            continue
+
+        lowered = model_name.lower()
+        if any(keyword in lowered for keyword in COMMON_EXCLUDED_MODEL_KEYWORDS):
+            continue
+
+        if provider == 'gemini' and any(keyword in lowered for keyword in ('image', 'audio', 'computer-use', 'robotics')):
+            continue
+
+        if provider == 'openai' and not lowered.startswith(OPENAI_TEXT_MODEL_PREFIXES):
+            continue
+
+        if provider == 'claude' and not lowered.startswith('claude'):
+            continue
+
+        if provider == 'gemini' and 'gemini' not in lowered:
+            continue
+
+        if lowered in seen:
+            continue
+
+        seen.add(lowered)
+        normalized.append(model_name)
+
+    return sorted(normalized, key=str.lower)
+
+
+def _extract_openai_style_models(payload: Dict[str, Any]) -> List[str]:
+    """从 OpenAI 兼容接口响应中提取模型名。"""
+    models = []
+    for item in payload.get('data', []) or []:
+        if isinstance(item, dict):
+            model_name = item.get('id') or item.get('name')
+            if model_name:
+                models.append(model_name)
+    return models
+
+
+def _get_provider_defaults(provider: str) -> List[str]:
+    """获取提供商默认模型，用于发现失败时回退。"""
+    for item in AIClientFactory.get_available_providers():
+        if item.get('id') == provider:
+            return item.get('models', [])
+    return []
+
+
+def _discover_openai_models(config: Dict[str, Any]) -> List[str]:
+    import requests
+
+    api_base = (config.get('api_base') or 'https://api.openai.com/v1/').rstrip('/') + '/'
+    response = requests.get(
+        f'{api_base}models',
+        headers={'Authorization': f"Bearer {config.get('api_key', '')}"},
+        timeout=(10, 30)
+    )
+    response.raise_for_status()
+    return _normalize_model_list(_extract_openai_style_models(response.json()), provider='openai')
+
+
+def _discover_openai_compatible_models(config: Dict[str, Any]) -> List[str]:
+    import requests
+
+    api_base = (config.get('api_base') or 'https://api.openai.com/v1/').rstrip('/') + '/'
+    response = requests.get(
+        f'{api_base}models',
+        headers={'Authorization': f"Bearer {config.get('api_key', '')}"},
+        timeout=(10, 30)
+    )
+    response.raise_for_status()
+    return _normalize_model_list(_extract_openai_style_models(response.json()), provider='openai-compatible')
+
+
+def _discover_gemini_models(config: Dict[str, Any]) -> List[str]:
+    import requests
+
+    api_base = (config.get('api_base') or GeminiClient.DEFAULT_BASE_URL).rstrip('/') + '/'
+
+    try:
+        response = requests.get(
+            f'{api_base}models',
+            headers={'Authorization': f"Bearer {config.get('api_key', '')}"},
+            timeout=(10, 30)
+        )
+        response.raise_for_status()
+        models = _normalize_model_list(_extract_openai_style_models(response.json()), provider='gemini')
+        if models:
+            return models
+    except Exception:
+        pass
+
+    response = requests.get(
+        'https://generativelanguage.googleapis.com/v1beta/models',
+        params={'key': config.get('api_key', '')},
+        timeout=(10, 30)
+    )
+    response.raise_for_status()
+
+    model_names = []
+    for item in response.json().get('models', []) or []:
+        if not isinstance(item, dict):
+            continue
+        supported_methods = item.get('supportedGenerationMethods') or []
+        if supported_methods and not any('generateContent' in method for method in supported_methods):
+            continue
+        model_name = (item.get('name') or '').split('/')[-1]
+        if model_name:
+            model_names.append(model_name)
+
+    return _normalize_model_list(model_names, provider='gemini')
+
+
+def _discover_claude_models(config: Dict[str, Any]) -> List[str]:
+    import requests
+
+    api_base = (config.get('api_base') or 'https://api.anthropic.com/v1/').rstrip('/') + '/'
+    response = requests.get(
+        f'{api_base}models',
+        headers={
+            'x-api-key': config.get('api_key', ''),
+            'anthropic-version': '2023-06-01'
+        },
+        timeout=(10, 30)
+    )
+    response.raise_for_status()
+
+    models = []
+    for item in response.json().get('data', []) or []:
+        if isinstance(item, dict) and item.get('id'):
+            models.append(item['id'])
+
+    return _normalize_model_list(models, provider='claude')
+
+
+def _discover_ollama_models(config: Dict[str, Any]) -> List[str]:
+    import requests
+
+    api_base = (config.get('api_base') or 'http://localhost:11434').rstrip('/')
+    response = requests.get(f'{api_base}/api/tags', timeout=(5, 15))
+    response.raise_for_status()
+
+    models = []
+    for item in response.json().get('models', []) or []:
+        if isinstance(item, dict):
+            model_name = item.get('name') or item.get('model')
+            if model_name:
+                models.append(model_name)
+
+    return _normalize_model_list(models, provider='ollama')
 
 
 class AIConfig:
@@ -95,14 +264,19 @@ class AIConfig:
 
     @staticmethod
     def save_config(config_data: Dict[str, Any]) -> int:
-        """保存配置"""
+        """????"""
         conn = AIConfig.get_db()
         cursor = conn.cursor()
 
         config_id = config_data.get('id')
 
         if config_id:
-            # 更新现有配置
+            existing_config = AIConfig.get_config(config_id) or {}
+            api_key = config_data.get('api_key')
+            if api_key is None or (isinstance(api_key, str) and (not api_key.strip() or api_key.startswith('***'))):
+                api_key = existing_config.get('api_key')
+
+            # ??????
             cursor.execute('''
                 UPDATE ai_configs SET
                     name = ?,
@@ -117,7 +291,7 @@ class AIConfig:
             ''', (
                 config_data.get('name'),
                 config_data.get('provider', 'openai'),
-                config_data.get('api_key'),
+                api_key,
                 config_data.get('api_base'),
                 config_data.get('model', 'gpt-3.5-turbo'),
                 config_data.get('temperature', 0.7),
@@ -125,7 +299,7 @@ class AIConfig:
                 config_id
             ))
         else:
-            # 插入新配置
+            # ?????
             cursor.execute('''
                 INSERT INTO ai_configs
                 (name, provider, api_key, api_base, model, temperature, max_tokens)
@@ -145,6 +319,7 @@ class AIConfig:
         conn.close()
 
         return config_id
+
 
     @staticmethod
     def delete_config(config_id: int) -> bool:
@@ -369,141 +544,182 @@ class OllamaClient(BaseAIClient):
 
 
 class GeminiClient(BaseAIClient):
-    """Google Gemini 客户端"""
+    """Google Gemini ?????? Google AI Studio OpenAI ?????"""
+
+    DEFAULT_BASE_URL = 'https://generativelanguage.googleapis.com/v1beta/openai/'
 
     def __init__(self, config: Dict[str, Any]):
         super().__init__(config)
-        self.client = None
-        self._init_client()
+        self.api_base = (self.api_base or self.DEFAULT_BASE_URL).rstrip('/') + '/'
 
-    def _init_client(self):
-        """初始化 Gemini 客户端"""
-        try:
-            import google.generativeai as genai
+    def _request_chat_completions(self, messages: List[Dict[str, str]], stream: bool = False):
+        import requests
 
-            genai.configure(api_key=self.api_key)
-
-            # 配置生成参数
-            generation_config = {
-                'temperature': self.temperature,
-                'max_output_tokens': self.max_tokens,
-            }
-
-            self.client = genai.GenerativeModel(
-                model_name=self.model,
-                generation_config=generation_config
-            )
-        except ImportError:
-            raise ImportError("请安装 google-generativeai: pip install google-generativeai")
+        url = f"{self.api_base}chat/completions"
+        payload = {
+            'model': self.model,
+            'messages': messages,
+            'temperature': self.temperature,
+            'max_tokens': self.max_tokens,
+            'stream': stream,
+        }
+        headers = {
+            'Authorization': f'Bearer {self.api_key}',
+            'Content-Type': 'application/json',
+        }
+        response = requests.post(url, headers=headers, json=payload, stream=stream, timeout=(10, 60))
+        response.raise_for_status()
+        return response
 
     def chat(self, messages: List[Dict[str, str]], stream: bool = False):
-        """发送聊天请求"""
-        if not self.client:
-            raise RuntimeError("Gemini 客户端未初始化")
-
-        # 转换消息格式为 Gemini 格式
-        # Gemini 使用 history + current message 格式
-        history = []
-        current_message = None
-
-        for msg in messages:
-            role = msg.get('role')
-            content = msg.get('content', '')
-
-            if role == 'system':
-                # Gemini 不直接支持 system message，合并到第一条 user message
-                if not history and not current_message:
-                    current_message = f"System: {content}\n\n"
-                continue
-            elif role == 'user':
-                if current_message is None:
-                    current_message = content
-                else:
-                    history.append({'role': 'user', 'parts': [current_message]})
-                    current_message = content
-            elif role == 'assistant':
-                history.append({'role': 'model', 'parts': [content]})
-
-        if current_message is None:
-            current_message = "Hello"
-
-        # 创建聊天会话
-        chat = self.client.start_chat(history=history)
+        """??????"""
+        response = self._request_chat_completions(messages, stream=stream)
 
         if stream:
-            response = chat.send_message(current_message, stream=True)
-            return response
-        else:
-            response = chat.send_message(current_message)
-            return response.text
+            def generate() -> Generator[str, None, None]:
+                for line in response.iter_lines(decode_unicode=True):
+                    if not line:
+                        continue
+                    if line.startswith('data: '):
+                        payload = line[6:].strip()
+                        if payload == '[DONE]':
+                            break
+                        try:
+                            chunk = json.loads(payload)
+                        except json.JSONDecodeError:
+                            continue
+                        choices = chunk.get('choices') or []
+                        if not choices:
+                            continue
+                        delta = choices[0].get('delta') or {}
+                        content = delta.get('content')
+                        if content:
+                            yield content
+            return generate()
+
+        result = response.json()
+        choices = result.get('choices') or []
+        if not choices:
+            return ''
+        message = choices[0].get('message') or {}
+        return message.get('content', '')
 
     def test_connection(self) -> tuple:
         """测试连接"""
+        import requests
+
+        original_max_tokens = self.max_tokens
         try:
-            response = self.client.generate_content("Hello")
-            return True, "连接成功"
-        except Exception as e:
-            return False, str(e)
+            self.max_tokens = min(max(int(self.max_tokens or 32), 8), 64)
+            response = self._request_chat_completions(
+                [{'role': 'user', 'content': 'Hello'}],
+                stream=False,
+            )
+            result = response.json()
+            choices = result.get('choices') or []
+            if choices:
+                return True, '连接成功'
+            return False, '接口已响应，但未返回可用内容'
+        except requests.HTTPError as exc:
+            try:
+                error_data = exc.response.json()
+                return False, json.dumps(error_data, ensure_ascii=False)
+            except Exception:
+                return False, exc.response.text or str(exc)
+        except Exception as exc:
+            error_msg = str(exc)
+            if 'failed to connect' in error_msg.lower() or 'timeout' in error_msg.lower():
+                return False, '连接失败：无法访问 Google AI Studio 接口，请检查网络或代理设置。'
+            return False, error_msg
+        finally:
+            self.max_tokens = original_max_tokens
 
 
-class OpenAICompatibleClient(OpenAIClient):
-    """OpenAI 兼容 API 客户端（如 DashScope、智谱、文心一言等）"""
+class OpenAICompatibleClient(BaseAIClient):
+    """OpenAI ?? API ????? DashScope????Google AI Studio ??"""
+
+    DEFAULT_BASE_URL = 'https://api.openai.com/v1/'
 
     def __init__(self, config: Dict[str, Any]):
-        # 调用父类初始化
-        BaseAIClient.__init__(self, config)
-        self.client = None
-        self._init_client()
+        super().__init__(config)
+        self.api_base = (self.api_base or self.DEFAULT_BASE_URL).rstrip('/') + '/'
 
-    def _init_client(self):
-        """初始化 OpenAI 兼容客户端"""
-        try:
-            from openai import OpenAI
+    def _request_chat_completions(self, messages: List[Dict[str, str]], stream: bool = False):
+        import requests
 
-            client_kwargs = {
-                'api_key': self.api_key,
-            }
-
-            # 兼容 API 必须设置 base_url
-            if self.api_base:
-                client_kwargs['base_url'] = self.api_base
-            else:
-                # 使用常见的兼容地址作为默认
-                client_kwargs['base_url'] = 'https://api.openai.com/v1'
-
-            self.client = OpenAI(**client_kwargs)
-        except ImportError:
-            raise ImportError("请安装 openai: pip install openai")
+        url = f"{self.api_base}chat/completions"
+        payload = {
+            'model': self.model,
+            'messages': messages,
+            'temperature': self.temperature,
+            'max_tokens': self.max_tokens,
+            'stream': stream,
+        }
+        headers = {
+            'Authorization': f'Bearer {self.api_key}',
+            'Content-Type': 'application/json',
+        }
+        response = requests.post(url, headers=headers, json=payload, stream=stream, timeout=(10, 60))
+        response.raise_for_status()
+        return response
 
     def chat(self, messages: List[Dict[str, str]], stream: bool = False):
-        """发送聊天请求"""
-        if not self.client:
-            raise RuntimeError("OpenAI 兼容客户端未初始化")
-
-        response = self.client.chat.completions.create(
-            model=self.model,
-            messages=messages,
-            temperature=self.temperature,
-            max_tokens=self.max_tokens,
-            stream=stream
-        )
+        """??????"""
+        response = self._request_chat_completions(messages, stream=stream)
 
         if stream:
-            return response
-        else:
-            return response.choices[0].message.content
+            def generate() -> Generator[str, None, None]:
+                for line in response.iter_lines(decode_unicode=True):
+                    if not line:
+                        continue
+                    if line.startswith('data: '):
+                        payload = line[6:].strip()
+                        if payload == '[DONE]':
+                            break
+                        try:
+                            chunk = json.loads(payload)
+                        except json.JSONDecodeError:
+                            continue
+                        choices = chunk.get('choices') or []
+                        if not choices:
+                            continue
+                        delta = choices[0].get('delta') or {}
+                        content = delta.get('content')
+                        if content:
+                            yield content
+            return generate()
+
+        result = response.json()
+        choices = result.get('choices') or []
+        if not choices:
+            return ''
+        message = choices[0].get('message') or {}
+        return message.get('content', '')
 
     def test_connection(self) -> tuple:
         """测试连接"""
+        import requests
+
+        original_max_tokens = self.max_tokens
         try:
-            response = self.client.chat.completions.create(
-                model=self.model,
-                messages=[{"role": "user", "content": "Hello"}],
-                max_tokens=5
+            self.max_tokens = min(max(int(self.max_tokens or 32), 8), 64)
+            response = self._request_chat_completions(
+                [{'role': 'user', 'content': 'Hello'}],
+                stream=False,
             )
-            return True, "连接成功"
-        except Exception as e:
-            return False, str(e)
+            result = response.json()
+            choices = result.get('choices') or []
+            if choices:
+                return True, '连接成功'
+            return False, '接口已响应，但未返回可用内容'
+        except requests.HTTPError as exc:
+            try:
+                error_data = exc.response.json()
+                return False, json.dumps(error_data, ensure_ascii=False)
+            except Exception:
+                return False, exc.response.text or str(exc)
+        except Exception as exc:
+            return False, str(exc)
 
 
 class AIClientFactory:
@@ -529,13 +745,38 @@ class AIClientFactory:
         return client_class(config)
 
     @classmethod
+    def discover_models(cls, config: Dict[str, Any]) -> List[str]:
+        """根据配置发现当前接口可用模型。"""
+        provider = config.get('provider', 'openai')
+
+        try:
+            if provider == 'openai':
+                models = _discover_openai_models(config)
+            elif provider == 'openai-compatible':
+                models = _discover_openai_compatible_models(config)
+            elif provider == 'gemini':
+                models = _discover_gemini_models(config)
+            elif provider == 'claude':
+                models = _discover_claude_models(config)
+            elif provider == 'ollama':
+                models = _discover_ollama_models(config)
+            else:
+                models = []
+        except Exception:
+            models = []
+
+        if not models:
+            return _get_provider_defaults(provider)
+        return models
+
+    @classmethod
     def get_available_providers(cls) -> List[Dict[str, str]]:
         """获取可用的 AI 提供商列表"""
         return [
             {'id': 'openai', 'name': 'OpenAI', 'models': ['gpt-3.5-turbo', 'gpt-4', 'gpt-4-turbo', 'gpt-4o']},
-            {'id': 'openai-compatible', 'name': 'OpenAI 兼容 API', 'models': ['qwen-turbo', 'qwen-plus', 'qwen-max', 'deepseek-chat', 'moonshot-v1-8k']},
+            {'id': 'openai-compatible', 'name': 'OpenAI 兼容 API', 'models': ['qwen-turbo', 'qwen-plus', 'deepseek-chat', 'moonshot-v1-8k', 'gemini-2.5-flash', 'gemini-3-pro-preview']},
             {'id': 'claude', 'name': 'Claude (Anthropic)', 'models': ['claude-3-opus-20240229', 'claude-3-sonnet-20240229', 'claude-3-haiku-20240307']},
-            {'id': 'gemini', 'name': 'Google Gemini', 'models': ['gemini-pro', 'gemini-pro-vision', 'gemini-ultra']},
+            {'id': 'gemini', 'name': 'Google Gemini', 'models': ['gemini-2.5-flash', 'gemini-3-pro-preview', 'gemini-2.0-flash']},
             {'id': 'ollama', 'name': 'Ollama (本地)', 'models': ['llama2', 'llama3', 'mistral', 'qwen', 'phi3']},
         ]
 

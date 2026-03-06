@@ -1,6 +1,7 @@
 """
-本地小说管理器 - Flask后端
+??????? - Flask??
 """
+import json
 import os
 import sqlite3
 import re
@@ -9,28 +10,33 @@ from pathlib import Path
 from flask import Flask, render_template, jsonify, request, send_file
 from flask_cors import CORS
 
-# 支持的小说文件扩展名
+# ??????????
 NOVEL_EXTENSIONS = {'.txt', '.epub', '.pdf', '.mobi', '.azw3', '.doc', '.docx', '.rtf'}
 
 app = Flask(__name__, static_folder='static', template_folder='templates')
 CORS(app)
 
 DATABASE = 'novels.db'
+APP_ROOT = Path(__file__).resolve().parent
+UPLOAD_ROOT = APP_ROOT / 'library'
+TEXT_READABLE_EXTENSIONS = {'.txt'}
 
 
 def get_db():
-    """获取数据库连接"""
+    """???????"""
     conn = sqlite3.connect(DATABASE)
     conn.row_factory = sqlite3.Row
+    conn.execute('PRAGMA foreign_keys = ON')
     return conn
 
 
 def init_db():
-    """初始化数据库表"""
+    """???????"""
     conn = get_db()
     cursor = conn.cursor()
+    UPLOAD_ROOT.mkdir(parents=True, exist_ok=True)
 
-    # 小说表
+    # ???
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS novels (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -40,14 +46,14 @@ def init_db():
             file_path TEXT,
             category_id INTEGER,
             cover_path TEXT,
-            status INTEGER DEFAULT 0,  -- 0:未读 1:阅读中 2:已读完
+            status INTEGER DEFAULT 0,  -- 0:?? 1:??? 2:???
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (category_id) REFERENCES categories(id)
         )
     ''')
 
-    # 分类表
+    # ???
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS categories (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -57,7 +63,7 @@ def init_db():
         )
     ''')
 
-    # 标签表
+    # ???
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS tags (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -67,7 +73,7 @@ def init_db():
         )
     ''')
 
-    # 小说-标签关联表
+    # ??-?????
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS novel_tags (
             novel_id INTEGER,
@@ -78,11 +84,142 @@ def init_db():
         )
     ''')
 
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_novels_file_path ON novels(file_path)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_novels_category_status_updated ON novels(category_id, status, updated_at DESC)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_novel_tags_tag_novel ON novel_tags(tag_id, novel_id)')
+    cursor.execute('''
+        DELETE FROM novel_tags
+        WHERE novel_id NOT IN (SELECT id FROM novels)
+           OR tag_id NOT IN (SELECT id FROM tags)
+    ''')
+
     conn.commit()
     conn.close()
 
 
-# ==================== 页面路由 ====================
+def sanitize_storage_name(name):
+    """???????????????????"""
+    cleaned = re.sub(r'[<>:"/\\|?*\x00-\x1f]', '_', (name or '').strip())
+    cleaned = cleaned.strip(' .')
+    return cleaned or 'untitled'
+
+
+def sanitize_relative_storage_path(relative_path, fallback_name='untitled.txt'):
+    """????????????????"""
+    normalized = (relative_path or fallback_name).replace('\\', '/')
+    raw_parts = Path(normalized).parts
+    safe_parts = []
+
+    for part in raw_parts:
+        if part in ('', '.', '..'):
+            continue
+        safe_parts.append(sanitize_storage_name(part))
+
+    if not safe_parts:
+        safe_parts.append(sanitize_storage_name(fallback_name))
+
+    return Path(*safe_parts)
+
+
+def is_supported_novel_file(file_name):
+    return Path(file_name or '').suffix.lower() in NOVEL_EXTENSIONS
+
+
+def store_uploaded_file(file_storage, relative_path=None, namespace='manual', reuse_existing=False):
+    """????????????????????"""
+    original_name = Path(file_storage.filename or 'untitled.txt').name
+    target_rel = Path(namespace) / sanitize_relative_storage_path(relative_path, original_name)
+    target_abs = UPLOAD_ROOT / target_rel
+    target_abs.parent.mkdir(parents=True, exist_ok=True)
+
+    if reuse_existing and target_abs.exists():
+        return str(Path('library') / target_rel).replace('\\', '/')
+
+    final_rel = target_rel
+    final_abs = target_abs
+    counter = 1
+    while not reuse_existing and final_abs.exists():
+        final_rel = target_rel.with_name(f'{target_rel.stem}_{counter}{target_rel.suffix}')
+        final_abs = UPLOAD_ROOT / final_rel
+        counter += 1
+
+    file_storage.save(final_abs)
+    return str(Path('library') / final_rel).replace('\\', '/')
+
+
+def resolve_novel_file_path(file_path):
+    """????????????"""
+    if not file_path:
+        return None, []
+
+    file_path_normalized = file_path.replace('/', os.sep).replace('\\\\', os.sep)
+    possible_paths = [
+        file_path,
+        file_path_normalized,
+        os.path.join(os.getcwd(), file_path),
+        os.path.join(os.getcwd(), file_path_normalized),
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), file_path),
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), file_path_normalized),
+    ]
+
+    possible_paths = list(dict.fromkeys(possible_paths))
+    checked_paths = []
+
+    for path in possible_paths:
+        checked_paths.append(path)
+        if os.path.exists(path) and os.path.isfile(path):
+            return path, checked_paths
+
+    return None, checked_paths
+
+
+def is_text_readable_file(file_path):
+    return Path(file_path or '').suffix.lower() in TEXT_READABLE_EXTENSIONS
+
+
+def parse_import_request():
+    """??????????? JSON ? multipart/form-data"""
+    if request.files:
+        try:
+            novels = json.loads(request.form.get('novels', '[]'))
+            tag_ids = json.loads(request.form.get('tag_ids', '[]'))
+        except json.JSONDecodeError:
+            raise ValueError('导入数据格式无效')
+
+        default_status = int(request.form.get('default_status', 0))
+        files = request.files.getlist('files')
+        relative_paths = request.form.getlist('relative_paths')
+
+        if len(files) != len(novels):
+            raise ValueError('上传文件数量和导入条目不一致')
+
+        prepared_novels = []
+        for index, file_storage in enumerate(files):
+            if not file_storage or not file_storage.filename:
+                raise ValueError('存在未选择的导入文件')
+
+            relative_path = relative_paths[index] if index < len(relative_paths) else file_storage.filename
+            if not is_supported_novel_file(relative_path):
+                raise ValueError(f'不支持的文件格式: {relative_path}')
+
+            stored_path = store_uploaded_file(
+                file_storage,
+                relative_path=relative_path,
+                namespace='imports',
+                reuse_existing=True
+            )
+
+            novel_data = dict(novels[index])
+            novel_data['file_path'] = stored_path
+            prepared_novels.append(novel_data)
+
+        return prepared_novels, tag_ids, default_status
+
+    data = request.get_json(silent=True) or {}
+    novels = data.get('novels', [])
+    tag_ids = data.get('tag_ids', [])
+    default_status = data.get('default_status', 0)
+    return novels, tag_ids, default_status
 
 @app.route('/')
 def index():
@@ -253,36 +390,11 @@ def read_novel(novel_id):
 
     novel = dict(novel)
 
-    # 检查文件是否存在
     file_path = novel.get('file_path')
     if not file_path:
         return jsonify({'success': False, 'message': '小说未设置文件路径'}), 400
 
-    # 尝试在不同位置查找文件
-    # 标准化路径分隔符（处理Windows路径）
-    file_path_normalized = file_path.replace('/', os.sep).replace('\\\\', os.sep)
-
-    possible_paths = [
-        file_path,
-        file_path_normalized,
-        os.path.join(os.getcwd(), file_path),
-        os.path.join(os.getcwd(), file_path_normalized),
-        # 尝试从项目根目录开始查找
-        os.path.join(os.path.dirname(os.path.abspath(__file__)), file_path),
-        os.path.join(os.path.dirname(os.path.abspath(__file__)), file_path_normalized),
-    ]
-
-    # 去重
-    possible_paths = list(dict.fromkeys(possible_paths))
-
-    actual_path = None
-    checked_paths = []
-    for path in possible_paths:
-        checked_paths.append(path)
-        if os.path.exists(path) and os.path.isfile(path):
-            actual_path = path
-            break
-
+    actual_path, checked_paths = resolve_novel_file_path(file_path)
     if not actual_path:
         return jsonify({
             'success': False,
@@ -291,17 +403,22 @@ def read_novel(novel_id):
                 'novel': novel,
                 'checked_paths': checked_paths,
                 'current_working_dir': os.getcwd(),
-                'chapters': [{'title': '文件未找到', 'content': f'请在服务器上确认文件存在:\n{file_path}\n\n已查找路径:\n' + '\n'.join(checked_paths)}]
+                'chapters': [{'title': '文件未找到', 'content': f'请在服务器上确认文件存在:\n{file_path}\n\n已检查路径:\n' + '\n'.join(checked_paths)}]
             }
         }), 404
 
+    if not is_text_readable_file(actual_path):
+        return jsonify({
+            'success': False,
+            'message': '当前仅支持 TXT 文件在线阅读，请使用下载功能打开原文件',
+            'data': {'novel': novel, 'checked_paths': checked_paths}
+        }), 400
+
     try:
-        # 检测编码并读取文件
         encoding = detect_encoding(actual_path)
         with open(actual_path, 'r', encoding=encoding, errors='ignore') as f:
             content = f.read()
 
-        # 解析章节
         chapters = parse_chapters(content)
 
         return jsonify({
@@ -335,28 +452,12 @@ def get_chapter_content(novel_id, chapter_index):
     if not file_path:
         return jsonify({'success': False, 'message': '小说未设置文件路径'}), 400
 
-    # 查找文件（使用与read_novel相同的逻辑）
-    file_path_normalized = file_path.replace('/', os.sep).replace('\\\\', os.sep)
-
-    possible_paths = [
-        file_path,
-        file_path_normalized,
-        os.path.join(os.getcwd(), file_path),
-        os.path.join(os.getcwd(), file_path_normalized),
-        os.path.join(os.path.dirname(os.path.abspath(__file__)), file_path),
-        os.path.join(os.path.dirname(os.path.abspath(__file__)), file_path_normalized),
-    ]
-
-    possible_paths = list(dict.fromkeys(possible_paths))
-
-    actual_path = None
-    for path in possible_paths:
-        if os.path.exists(path) and os.path.isfile(path):
-            actual_path = path
-            break
-
+    actual_path, _ = resolve_novel_file_path(file_path)
     if not actual_path:
         return jsonify({'success': False, 'message': f'文件不存在: {file_path}'}), 404
+
+    if not is_text_readable_file(actual_path):
+        return jsonify({'success': False, 'message': '当前仅支持 TXT 文件在线阅读'}), 400
 
     try:
         encoding = detect_encoding(actual_path)
@@ -499,6 +600,29 @@ def download_novel(novel_id):
         return response
     except Exception as e:
         return jsonify({'success': False, 'message': f'下载失败: {str(e)}'}), 500
+
+
+@app.route('/api/files/upload', methods=['POST'])
+def upload_novel_file():
+    """上传单个小说文件到项目库"""
+    file_storage = request.files.get('file')
+    relative_path = request.form.get('relative_path', '')
+
+    if not file_storage or not file_storage.filename:
+        return jsonify({'success': False, 'message': '请选择要上传的文件'}), 400
+
+    if not is_supported_novel_file(relative_path or file_storage.filename):
+        return jsonify({'success': False, 'message': '不支持的文件格式'}), 400
+
+    try:
+        stored_path = store_uploaded_file(
+            file_storage,
+            relative_path=relative_path or file_storage.filename,
+            namespace='manual'
+        )
+        return jsonify({'success': True, 'data': {'file_path': stored_path}})
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
 
 
 @app.route('/api/novels', methods=['POST'])
@@ -898,6 +1022,295 @@ def check_novel_file(novel_id):
 
 from ai_client import AIConfig, AIClientFactory, get_ai_client
 
+AI_TAG_COLOR_PALETTE = [
+    '#6366f1', '#8b5cf6', '#06b6d4', '#14b8a6',
+    '#22c55e', '#eab308', '#f97316', '#ef4444',
+    '#ec4899', '#3b82f6'
+]
+
+
+def get_novel_detail_record(novel_id):
+    """获取单本小说详情及标签，用于 AI 元数据生成。"""
+    conn = get_db()
+    cursor = conn.cursor()
+
+    cursor.execute('''
+        SELECT n.*, c.name as category_name
+        FROM novels n
+        LEFT JOIN categories c ON n.category_id = c.id
+        WHERE n.id = ?
+    ''', (novel_id,))
+    novel = cursor.fetchone()
+
+    if not novel:
+        conn.close()
+        return None
+
+    novel = dict(novel)
+    cursor.execute('''
+        SELECT t.id, t.name, t.color
+        FROM tags t
+        JOIN novel_tags nt ON t.id = nt.tag_id
+        WHERE nt.novel_id = ?
+        ORDER BY t.name ASC
+    ''', (novel_id,))
+    novel['tags'] = [dict(row) for row in cursor.fetchall()]
+
+    conn.close()
+    return novel
+
+
+def get_category_name_by_id(category_id):
+    """根据分类 ID 获取分类名称。"""
+    if not category_id:
+        return ''
+
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute('SELECT name FROM categories WHERE id = ?', (category_id,))
+    row = cursor.fetchone()
+    conn.close()
+    return row['name'] if row else ''
+
+
+def get_tag_names_by_ids(tag_ids):
+    """根据标签 ID 列表获取标签名称。"""
+    if not tag_ids:
+        return []
+
+    clean_ids = [int(tag_id) for tag_id in tag_ids if str(tag_id).isdigit()]
+    if not clean_ids:
+        return []
+
+    conn = get_db()
+    cursor = conn.cursor()
+    placeholders = ','.join('?' for _ in clean_ids)
+    cursor.execute(
+        f'SELECT name FROM tags WHERE id IN ({placeholders}) ORDER BY name ASC',
+        clean_ids
+    )
+    names = [row['name'] for row in cursor.fetchall()]
+    conn.close()
+    return names
+
+
+def extract_text_excerpt(file_path, max_chars=4000):
+    """提取 TXT 小说前几个字符，作为 AI 生成上下文。"""
+    if not file_path:
+        return ''
+
+    actual_path, _ = resolve_novel_file_path(file_path)
+    if not actual_path or not is_text_readable_file(actual_path):
+        return ''
+
+    try:
+        encoding = detect_encoding(actual_path)
+        with open(actual_path, 'r', encoding=encoding, errors='ignore') as file_obj:
+            return file_obj.read(max_chars).strip()
+    except Exception:
+        return ''
+
+
+def extract_json_object(text):
+    """从 AI 文本响应中提取 JSON 对象。"""
+    cleaned = (text or '').strip()
+    if not cleaned:
+        raise ValueError('AI 未返回内容')
+
+    if cleaned.startswith('```'):
+        cleaned = re.sub(r'^```(?:json)?\s*', '', cleaned, flags=re.IGNORECASE)
+        cleaned = re.sub(r'\s*```$', '', cleaned)
+
+    try:
+        return json.loads(cleaned)
+    except json.JSONDecodeError:
+        match = re.search(r'\{[\s\S]*\}', cleaned)
+        if match:
+            return json.loads(match.group(0))
+        raise ValueError('AI 返回格式无法解析，请稍后重试')
+
+
+def normalize_ai_tag_names(raw_tags):
+    """清洗 AI 返回的标签名称。"""
+    if isinstance(raw_tags, str):
+        candidates = re.split(r'[,，、/\n]+', raw_tags)
+    elif isinstance(raw_tags, list):
+        candidates = []
+        for item in raw_tags:
+            if isinstance(item, str):
+                candidates.extend(re.split(r'[,，、/\n]+', item))
+    else:
+        candidates = []
+
+    normalized = []
+    seen = set()
+    for item in candidates:
+        name = (item or '').strip()
+        name = re.sub(r'^[#\s\-\*\.]+|[#\s\-\*\.]+$', '', name)
+        name = re.sub(r'["\'\[\]{}()<>《》“”]', '', name)
+        name = name.replace('（', '').replace('）', '')
+        name = name[:20].strip()
+        if len(name) < 2:
+            continue
+        lower_name = name.lower()
+        if lower_name in seen:
+            continue
+        seen.add(lower_name)
+        normalized.append(name)
+        if len(normalized) >= 8:
+            break
+
+    return normalized
+
+
+def get_ai_tag_color(tag_name):
+    """根据标签名称稳定生成颜色。"""
+    if not tag_name:
+        return '#3498db'
+    color_index = sum(ord(char) for char in tag_name) % len(AI_TAG_COLOR_PALETTE)
+    return AI_TAG_COLOR_PALETTE[color_index]
+
+
+def ensure_tags_exist(tag_names):
+    """确保标签存在，不存在时自动创建。"""
+    clean_names = normalize_ai_tag_names(tag_names)
+    if not clean_names:
+        return []
+
+    conn = get_db()
+    cursor = conn.cursor()
+    tag_records = []
+
+    try:
+        for tag_name in clean_names:
+            cursor.execute(
+                'SELECT id, name, color FROM tags WHERE name = ? COLLATE NOCASE LIMIT 1',
+                (tag_name,)
+            )
+            tag_row = cursor.fetchone()
+            if tag_row:
+                tag_records.append(dict(tag_row))
+                continue
+
+            color = get_ai_tag_color(tag_name)
+            try:
+                cursor.execute(
+                    'INSERT INTO tags (name, color) VALUES (?, ?)',
+                    (tag_name, color)
+                )
+                tag_records.append({
+                    'id': cursor.lastrowid,
+                    'name': tag_name,
+                    'color': color
+                })
+            except sqlite3.IntegrityError:
+                cursor.execute(
+                    'SELECT id, name, color FROM tags WHERE name = ? COLLATE NOCASE LIMIT 1',
+                    (tag_name,)
+                )
+                existing_row = cursor.fetchone()
+                if existing_row:
+                    tag_records.append(dict(existing_row))
+
+        conn.commit()
+        return tag_records
+    finally:
+        conn.close()
+
+
+def build_novel_ai_messages(title, author, category_name, description, existing_tags, content_excerpt):
+    """构建小说简介与标签生成提示词。"""
+    context_blocks = [
+        f'标题：{title or "未提供"}',
+        f'作者：{author or "未提供"}',
+        f'分类：{category_name or "未分类"}',
+        f'已有简介：{description or "无"}',
+        f'已有标签：{"、".join(existing_tags) if existing_tags else "无"}'
+    ]
+
+    if content_excerpt:
+        context_blocks.append(f'正文片段：\n{content_excerpt[:4000]}')
+
+    user_prompt = '\n\n'.join(context_blocks) + """
+
+请根据以上信息，生成小说的标签和简介。
+
+要求：
+1. 只输出一个 JSON 对象，不要输出 Markdown。
+2. JSON 格式必须为：{"summary":"...","tags":["标签1","标签2"]}
+3. summary 使用中文，控制在 70 到 140 个汉字，语气自然，适合展示在书库卡片里。
+4. tags 返回 3 到 6 个简短标签，优先输出题材、风格、世界观、受众、节奏类标签。
+5. 信息不足时可以概括，但不要编造具体情节、人物或结局。
+6. 标签不要重复，不要带序号，不要带解释。
+"""
+
+    return [
+        {
+            'role': 'system',
+            'content': '你是一个小说资料整理助手，擅长为书库生成简洁简介和标签。'
+        },
+        {
+            'role': 'user',
+            'content': user_prompt.strip()
+        }
+    ]
+
+
+def build_ai_test_config(data):
+    """根据表单数据构建可测试的 AI 配置，支持未保存配置。"""
+    payload = data or {}
+    config_id = payload.get('id')
+    existing_config = None
+
+    if str(config_id).isdigit():
+        existing_config = AIConfig.get_config(int(config_id))
+
+    config = dict(existing_config or {})
+
+    for field in ('name', 'provider', 'api_base', 'model'):
+        value = payload.get(field)
+        if value is not None:
+            config[field] = value
+
+    for field in ('temperature', 'max_tokens'):
+        value = payload.get(field)
+        if value is not None and value != '':
+            config[field] = value
+
+    api_key = payload.get('api_key')
+    if isinstance(api_key, str):
+        api_key = api_key.strip()
+        if api_key and not api_key.startswith('***'):
+            config['api_key'] = api_key
+    elif api_key is not None:
+        config['api_key'] = api_key
+
+    return config
+
+
+def run_ai_config_test(config):
+    """执行 AI 配置测试，并附带可选模型列表。"""
+    client = AIClientFactory.create_client(config)
+    success, message = client.test_connection()
+
+    models = []
+    model_discovery_message = ''
+    if success:
+        try:
+            models = AIClientFactory.discover_models(config)
+        except Exception as exc:
+            model_discovery_message = str(exc)
+
+    return {
+        'success': success,
+        'message': message,
+        'data': {
+            'models': models,
+            'model_discovery_message': model_discovery_message,
+            'model_count': len(models)
+        }
+    }
+
 @app.route('/api/ai/providers', methods=['GET'])
 def get_ai_providers():
     """获取可用的 AI 提供商列表"""
@@ -995,13 +1408,29 @@ def test_ai_config(config_id):
         return jsonify({'success': False, 'message': '配置不存在'}), 404
 
     try:
-        client = AIClientFactory.create_client(config)
-        success, message = client.test_connection()
+        return jsonify(run_ai_config_test(config))
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
 
-        return jsonify({
-            'success': success,
-            'message': message
-        })
+
+@app.route('/api/ai/configs/test', methods=['POST'])
+def test_ai_config_payload():
+    """测试当前表单中的 AI 配置，并返回可选模型。"""
+    data = request.get_json(silent=True) or {}
+    config = build_ai_test_config(data)
+
+    if not config.get('provider'):
+        return jsonify({'success': False, 'message': '请选择 AI 提供商'}), 400
+
+    if not config.get('model'):
+        return jsonify({'success': False, 'message': '请输入模型名称'}), 400
+
+    requires_api_key = config.get('provider') not in ['ollama']
+    if requires_api_key and not config.get('api_key'):
+        return jsonify({'success': False, 'message': '请输入 API Key'}), 400
+
+    try:
+        return jsonify(run_ai_config_test(config))
     except Exception as e:
         return jsonify({'success': False, 'message': str(e)}), 500
 
@@ -1023,6 +1452,79 @@ def ai_chat():
     try:
         response = client.chat(messages, stream=False)
         return jsonify({'success': True, 'data': {'response': response}})
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@app.route('/api/ai/novels/metadata', methods=['POST'])
+def generate_novel_metadata():
+    """使用 AI 为小说生成简介和标签。"""
+    data = request.get_json(silent=True) or {}
+    novel_id = data.get('novel_id')
+    base_novel = get_novel_detail_record(novel_id) if novel_id else None
+
+    title = (data.get('title') or (base_novel or {}).get('title') or '').strip()
+    author = (data.get('author') or (base_novel or {}).get('author') or '').strip()
+    description = (data.get('description') or (base_novel or {}).get('description') or '').strip()
+    file_path = (data.get('file_path') or (base_novel or {}).get('file_path') or '').strip()
+    category_id = data.get('category_id')
+    category_name = (data.get('category_name') or '').strip()
+
+    if not category_name:
+        if category_id:
+            category_name = get_category_name_by_id(category_id)
+        elif base_novel:
+            category_name = (base_novel.get('category_name') or '').strip()
+
+    tag_ids = data.get('tag_ids')
+    if tag_ids is None and base_novel:
+        tag_ids = [tag['id'] for tag in base_novel.get('tags', [])]
+    existing_tags = get_tag_names_by_ids(tag_ids or [])
+    if not existing_tags and base_novel:
+        existing_tags = [tag['name'] for tag in base_novel.get('tags', [])]
+
+    content_excerpt = (data.get('content_excerpt') or '').strip()
+    if not content_excerpt:
+        content_excerpt = extract_text_excerpt(file_path)
+
+    if not title and not description and not content_excerpt:
+        return jsonify({'success': False, 'message': '请先填写书名，或提供可读取的文本内容'}), 400
+
+    client = get_ai_client()
+    if not client:
+        return jsonify({'success': False, 'message': '请先在 AI 配置中激活可用模型'}), 400
+
+    try:
+        messages = build_novel_ai_messages(
+            title=title,
+            author=author,
+            category_name=category_name,
+            description=description,
+            existing_tags=existing_tags,
+            content_excerpt=content_excerpt
+        )
+        response_text = client.chat(messages, stream=False)
+        response_data = extract_json_object(response_text)
+
+        summary = str(response_data.get('summary', '')).strip()
+        summary = re.sub(r'\s+', ' ', summary)
+        summary = summary.strip('"“”')
+
+        tag_names = normalize_ai_tag_names(response_data.get('tags', []))
+        tag_records = ensure_tags_exist(tag_names)
+
+        if not summary and not tag_records:
+            return jsonify({'success': False, 'message': 'AI 未生成可用的简介或标签，请重试'}), 500
+
+        return jsonify({
+            'success': True,
+            'data': {
+                'summary': summary,
+                'tags': tag_records,
+                'tag_names': [tag['name'] for tag in tag_records],
+                'used_excerpt': bool(content_excerpt)
+            }
+        })
     except Exception as e:
         return jsonify({'success': False, 'message': str(e)}), 500
 
@@ -1112,10 +1614,10 @@ def scan_folder_api():
 @app.route('/api/import/batch', methods=['POST'])
 def batch_import():
     """批量导入小说"""
-    data = request.json
-    novels = data.get('novels', [])
-    tag_ids = data.get('tag_ids', [])
-    default_status = data.get('default_status', 0)
+    try:
+        novels, tag_ids, default_status = parse_import_request()
+    except ValueError as e:
+        return jsonify({'success': False, 'message': str(e)}), 400
 
     if not novels:
         return jsonify({'success': False, 'message': '没有要导入的小说'}), 400
@@ -1134,14 +1636,12 @@ def batch_import():
                 continue
 
             try:
-                # 检查文件路径是否已存在
                 cursor.execute('SELECT id FROM novels WHERE file_path = ?',
                              (novel_data.get('file_path'),))
                 if cursor.fetchone():
                     skipped += 1
                     continue
 
-                # 获取或创建分类
                 category_id = None
                 category_name = novel_data.get('category_name')
                 if category_name:
@@ -1153,7 +1653,6 @@ def batch_import():
                         cursor.execute('INSERT INTO categories (name) VALUES (?)', (category_name,))
                         category_id = cursor.lastrowid
 
-                # 插入小说
                 cursor.execute('''
                     INSERT INTO novels (title, author, file_path, category_id, status)
                     VALUES (?, ?, ?, ?, ?)
@@ -1167,9 +1666,8 @@ def batch_import():
 
                 novel_id = cursor.lastrowid
 
-                # 添加标签
                 for tag_id in tag_ids:
-                    cursor.execute('INSERT INTO novel_tags (novel_id, tag_id) VALUES (?, ?)',
+                    cursor.execute('INSERT OR IGNORE INTO novel_tags (novel_id, tag_id) VALUES (?, ?)',
                                  (novel_id, tag_id))
 
                 imported += 1
@@ -1186,7 +1684,7 @@ def batch_import():
                 'imported': imported,
                 'skipped': skipped,
                 'failed': failed,
-                'errors': errors[:10]  # 只返回前10个错误
+                'errors': errors[:10]
             }
         })
 
@@ -1196,8 +1694,6 @@ def batch_import():
     finally:
         conn.close()
 
-
-# ==================== 批量操作 API ====================
 
 @app.route('/api/novels/batch/tags', methods=['POST'])
 def batch_add_tags():
