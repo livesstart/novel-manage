@@ -24,7 +24,8 @@ const batchAIState = {
     queue: [],
     currentIndex: 0,
     isGenerating: false,
-    isApplying: false
+    isApplying: false,
+    autoSkipOnError: true
 };
 
 // API 封装
@@ -796,19 +797,25 @@ function editNovel(novelId) {
 }
 
 async function deleteNovel(novelId) {
-    if (!confirm('确定要删除这本小说吗？')) return;
+    if (!confirm('确定要删除这本小说及其对应文件吗？此操作不可恢复。')) return;
 
     try {
         const res = await api.delete(`/api/novels/${novelId}`);
         if (res.success) {
             await Promise.all([loadNovels(), loadStats()]);
-            showToast('小说已删除', 'success');
+            const deletedFiles = res.data?.deleted_files || 0;
+            showToast(
+                deletedFiles > 0
+                    ? `小说已删除，并删除 ${deletedFiles} 个文件`
+                    : '小说记录已删除，对应文件不存在或已被其他记录共用',
+                'success'
+            );
         } else {
-            showToast(res.message || '删除失败', 'error');
+            showToast(res.message || '未知作者', 'error');
         }
     } catch (err) {
         console.error('删除小说失败:', err);
-        showToast('删除失败', 'error');
+        showToast('删除失败: ' + err.message, 'error');
     }
 }
 
@@ -1970,7 +1977,7 @@ async function batchDeleteNovels() {
         return;
     }
 
-    if (!confirm(`确定要删除选中的 ${novelIds.length} 本小说吗？此操作不可恢复。`)) {
+    if (!confirm(`确定要删除选中的 ${novelIds.length} 本小说及其对应文件吗？此操作不可恢复。`)) {
         return;
     }
 
@@ -1982,12 +1989,18 @@ async function batchDeleteNovels() {
         if (res.success) {
             clearBatchSelection();
             await Promise.all([loadNovels(), loadStats()]);
-            showToast(`已删除 ${res.data.deleted} 本小说`, 'success');
+            const deletedFiles = res.data?.deleted_files || 0;
+            showToast(
+                deletedFiles > 0
+                    ? `已删除 ${res.data.deleted} 本小说，并删除 ${deletedFiles} 个文件`
+                    : `已删除 ${res.data.deleted} 本小说，对应文件不存在或已被其他记录共用`,
+                'success'
+            );
         } else {
-            showToast(res.message || '删除失败', 'error');
+            showToast(res.message || '未知作者', 'error');
         }
     } catch (err) {
-        console.error('批量删除失败:', err);
+        console.error('删除小说失败:', err);
         showToast('删除失败: ' + err.message, 'error');
     }
 }
@@ -2007,6 +2020,7 @@ function getBatchAIStatusMeta(status) {
         generated: { text: '待确认', className: 'generated' },
         applied: { text: '已应用', className: 'applied' },
         skipped: { text: '已跳过', className: 'skipped' },
+        auto_skipped: { text: '失败已跳过', className: 'skipped' },
         error: { text: '生成失败', className: 'error' }
     };
     return metaMap[status] || metaMap.pending;
@@ -2045,6 +2059,18 @@ function resetBatchAIQueueState() {
     batchAIState.isApplying = false;
 }
 
+function isBatchAISkippedStatus(status) {
+    return status === 'skipped' || status === 'auto_skipped';
+}
+
+function syncBatchAIModeSettings() {
+    const autoSkipCheckbox = document.getElementById('batch-ai-auto-skip-error');
+    if (!autoSkipCheckbox) {
+        return;
+    }
+    batchAIState.autoSkipOnError = autoSkipCheckbox.checked;
+}
+
 function openBatchAIModal() {
     const selectedNovels = getSelectedNovelsForBatchAI();
     if (selectedNovels.length === 0) {
@@ -2054,6 +2080,13 @@ function openBatchAIModal() {
 
     resetBatchAIQueueState();
     batchAIState.queue = selectedNovels.map(buildBatchAIQueueItem);
+
+    const autoSkipCheckbox = document.getElementById('batch-ai-auto-skip-error');
+    if (autoSkipCheckbox) {
+        autoSkipCheckbox.checked = batchAIState.autoSkipOnError;
+    }
+    syncBatchAIModeSettings();
+
     renderBatchAIQueue();
     openModal('batch-ai-modal');
     processCurrentBatchAIItem();
@@ -2068,7 +2101,8 @@ function renderBatchAIQueue() {
 
     const total = batchAIState.queue.length;
     const applied = batchAIState.queue.filter(item => item.status === 'applied').length;
-    const skipped = batchAIState.queue.filter(item => item.status === 'skipped').length;
+    const skipped = batchAIState.queue.filter(item => isBatchAISkippedStatus(item.status)).length;
+    const autoSkipped = batchAIState.queue.filter(item => item.status === 'auto_skipped').length;
     const errors = batchAIState.queue.filter(item => item.status === 'error').length;
     const doneCount = applied + skipped;
     const progressPercent = total ? Math.round((doneCount / total) * 100) : 0;
@@ -2077,9 +2111,16 @@ function renderBatchAIQueue() {
     progressText.textContent = `${currentIndexDisplay} / ${total}`;
     progressFill.style.width = `${progressPercent}%`;
     queueSummary.textContent = `已应用 ${applied} 本，跳过 ${skipped} 本，待处理 ${Math.max(total - doneCount, 0)} 本`;
-    queueHint.textContent = errors > 0
-        ? `有 ${errors} 本生成失败，可重新生成或跳过后继续`
-        : '会逐本调用 AI，确认后再写回数据库';
+
+    if (errors > 0) {
+        queueHint.textContent = `有 ${errors} 本生成失败，可重新生成或跳过后继续`;
+    } else if (autoSkipped > 0) {
+        queueHint.textContent = `已有 ${autoSkipped} 本生成失败并自动跳过，队列会继续向后处理`;
+    } else if (batchAIState.autoSkipOnError) {
+        queueHint.textContent = '已开启失败自动跳过：生成失败时会直接处理下一本';
+    } else {
+        queueHint.textContent = '会逐本调用 AI，确认后再写回数据库';
+    }
 
     queueList.innerHTML = batchAIState.queue.map((item, index) => {
         const statusMeta = getBatchAIStatusMeta(item.status);
@@ -2157,6 +2198,10 @@ function renderBatchAICurrentItem() {
         resultHintEl.textContent = '正在调用 AI 生成简介和标签，请稍候...';
     } else if (item.status === 'error') {
         resultHintEl.textContent = item.error || 'AI 生成失败，请重试';
+    } else if (item.status === 'auto_skipped') {
+        resultHintEl.textContent = item.error
+            ? `本项生成失败，已按模式自动跳过：${item.error}`
+            : '本项生成失败，已按模式自动跳过';
     } else if (item.error) {
         resultHintEl.textContent = `上次保存失败：${item.error}`;
     } else {
@@ -2244,6 +2289,8 @@ async function processCurrentBatchAIItem(force = false) {
         return;
     }
 
+    let shouldAdvanceAfterError = false;
+
     batchAIState.isGenerating = true;
     item.status = 'generating';
     item.error = '';
@@ -2268,13 +2315,28 @@ async function processCurrentBatchAIItem(force = false) {
         item.status = 'generated';
         renderBatchAIQueue();
     } catch (err) {
-        item.status = 'error';
         item.error = err.message;
-        renderBatchAIQueue();
-        showToast(`《${item.novel.title}》生成失败：${err.message}`, 'error');
+        item.generatedSummary = '';
+        item.generatedTagIds = [];
+        item.selectedTagIds = [...item.originalTagIds];
+        item.applySummary = false;
+        item.applyTags = item.originalTagIds.length > 0;
+
+        if (batchAIState.autoSkipOnError) {
+            item.status = 'auto_skipped';
+            shouldAdvanceAfterError = true;
+        } else {
+            item.status = 'error';
+            renderBatchAIQueue();
+            showToast(`《${item.novel.title}》生成失败：${err.message}`, 'error');
+        }
     } finally {
         batchAIState.isGenerating = false;
         renderBatchAIQueue();
+    }
+
+    if (shouldAdvanceAfterError) {
+        await advanceBatchAIQueue();
     }
 }
 
@@ -2284,6 +2346,7 @@ async function advanceBatchAIQueue() {
     if (batchAIState.currentIndex >= batchAIState.queue.length) {
         const applied = batchAIState.queue.filter(item => item.status === 'applied').length;
         const skipped = batchAIState.queue.filter(item => item.status === 'skipped').length;
+        const autoSkipped = batchAIState.queue.filter(item => item.status === 'auto_skipped').length;
         const failed = batchAIState.queue.filter(item => item.status === 'error').length;
 
         closeModal('batch-ai-modal');
@@ -2291,8 +2354,8 @@ async function advanceBatchAIQueue() {
         await Promise.all([loadNovels(), loadStats(), loadTags()]);
         resetBatchAIQueueState();
         showToast(
-            `批量 AI 完成：已应用 ${applied} 本，跳过 ${skipped} 本${failed ? `，失败 ${failed} 本` : ''}`,
-            failed ? 'error' : 'success'
+            `批量 AI 完成：已应用 ${applied} 本，手动跳过 ${skipped} 本${autoSkipped ? `，失败自动跳过 ${autoSkipped} 本` : ''}${failed ? `，失败 ${failed} 本` : ''}`,
+            autoSkipped || failed ? 'error' : 'success'
         );
         return;
     }
@@ -2497,6 +2560,7 @@ function bindEvents() {
     });
     document.getElementById('btn-batch-ai-skip').addEventListener('click', skipCurrentBatchAIItem);
     document.getElementById('btn-batch-ai-apply-next').addEventListener('click', applyCurrentBatchAIItem);
+    document.getElementById('batch-ai-auto-skip-error').addEventListener('change', syncBatchAIModeSettings);
     document.getElementById('batch-ai-generated-summary').addEventListener('input', syncBatchAIInputsToCurrentItem);
     document.getElementById('batch-ai-apply-summary').addEventListener('change', syncBatchAIInputsToCurrentItem);
     document.getElementById('batch-ai-apply-tags').addEventListener('change', syncBatchAIInputsToCurrentItem);

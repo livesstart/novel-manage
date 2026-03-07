@@ -213,6 +213,107 @@ def is_text_readable_file(file_path):
     return Path(file_path or '').suffix.lower() in TEXT_READABLE_EXTENSIONS
 
 
+def _normalize_novel_ids(novel_ids):
+    normalized = []
+    seen = set()
+
+    for novel_id in novel_ids or []:
+        try:
+            current_id = int(novel_id)
+        except (TypeError, ValueError):
+            continue
+
+        if current_id <= 0 or current_id in seen:
+            continue
+
+        seen.add(current_id)
+        normalized.append(current_id)
+
+    return normalized
+
+
+def _cleanup_empty_parent_dirs(file_path):
+    try:
+        upload_root = UPLOAD_ROOT.resolve()
+        current = Path(file_path).resolve().parent
+    except Exception:
+        return
+
+    while current != upload_root and upload_root in current.parents:
+        try:
+            next(current.iterdir())
+            break
+        except StopIteration:
+            current.rmdir()
+            current = current.parent
+        except OSError:
+            break
+
+
+def _collect_novel_file_deletion_targets(cursor, novel_ids):
+    normalized_ids = _normalize_novel_ids(novel_ids)
+    if not normalized_ids:
+        return [], [], set()
+
+    placeholders = ','.join(['?' for _ in normalized_ids])
+    cursor.execute(
+        f'SELECT id, title, file_path FROM novels WHERE id IN ({placeholders})',
+        normalized_ids
+    )
+    rows = cursor.fetchall()
+
+    file_paths = sorted({row['file_path'] for row in rows if row['file_path']})
+    if not file_paths:
+        return rows, [], set()
+
+    file_placeholders = ','.join(['?' for _ in file_paths])
+    cursor.execute(
+        f'''SELECT file_path, COUNT(*) AS ref_count
+            FROM novels
+            WHERE file_path IN ({file_placeholders})
+              AND id NOT IN ({placeholders})
+            GROUP BY file_path''',
+        file_paths + normalized_ids
+    )
+    shared_paths = {row['file_path'] for row in cursor.fetchall() if row['ref_count'] > 0}
+    deletion_targets = [file_path for file_path in file_paths if file_path not in shared_paths]
+    return rows, deletion_targets, shared_paths
+
+
+def _delete_novel_files(file_paths):
+    result = {
+        'deleted': [],
+        'missing': [],
+        'failed': []
+    }
+
+    for file_path in file_paths:
+        actual_path, _ = resolve_novel_file_path(file_path)
+        if not actual_path:
+            result['missing'].append(file_path)
+            continue
+
+        try:
+            os.remove(actual_path)
+            result['deleted'].append({'file_path': file_path, 'actual_path': actual_path})
+            _cleanup_empty_parent_dirs(actual_path)
+        except Exception as exc:
+            result['failed'].append({
+                'file_path': file_path,
+                'actual_path': actual_path,
+                'error': str(exc)
+            })
+
+    return result
+
+
+def _build_file_delete_error_message(failed_items):
+    preview = []
+    for item in failed_items[:3]:
+        preview.append(f"{item['file_path']}: {item['error']}")
+    return '?????????' + '?'.join(preview)
+
+
 def parse_import_request():
     """??????????? JSON ? multipart/form-data"""
     if request.files:
@@ -739,9 +840,35 @@ def update_novel(novel_id):
 
 @app.route('/api/novels/<int:novel_id>', methods=['DELETE'])
 def delete_novel(novel_id):
-    """删除小说"""
+    """????"""
     conn = get_db()
     cursor = conn.cursor()
+
+    try:
+        rows, deletion_targets, shared_paths = _collect_novel_file_deletion_targets(cursor, [novel_id])
+        if not rows:
+            return jsonify({'success': False, 'message': '?????'}), 404
+
+        file_delete_result = _delete_novel_files(deletion_targets)
+        if file_delete_result['failed']:
+            return jsonify({'success': False, 'message': _build_file_delete_error_message(file_delete_result['failed'])}), 500
+
+        cursor.execute('DELETE FROM novels WHERE id = ?', (novel_id,))
+        conn.commit()
+        return jsonify({
+            'success': True,
+            'data': {
+                'deleted': cursor.rowcount,
+                'deleted_files': len(file_delete_result['deleted']),
+                'missing_files': len(file_delete_result['missing']),
+                'shared_files': len(shared_paths)
+            }
+        })
+    except Exception as e:
+        conn.rollback()
+        return jsonify({'success': False, 'message': str(e)}), 500
+    finally:
+        conn.close()
 
     try:
         cursor.execute('DELETE FROM novels WHERE id = ?', (novel_id,))
@@ -2497,28 +2624,43 @@ def batch_set_status():
 
 @app.route('/api/novels/batch/delete', methods=['POST'])
 def batch_delete_novels():
-    """批量删除小说"""
+    """??????"""
     data = request.json
-    novel_ids = data.get('novel_ids', [])
+    novel_ids = _normalize_novel_ids((data or {}).get('novel_ids', []))
 
     if not novel_ids:
-        return jsonify({'success': False, 'message': '未选择小说'}), 400
+        return jsonify({'success': False, 'message': '?????'}), 400
 
     conn = get_db()
     cursor = conn.cursor()
 
     try:
+        rows, deletion_targets, shared_paths = _collect_novel_file_deletion_targets(cursor, novel_ids)
+        if not rows:
+            return jsonify({'success': False, 'message': '?????????'}), 404
+
+        file_delete_result = _delete_novel_files(deletion_targets)
+        if file_delete_result['failed']:
+            return jsonify({'success': False, 'message': _build_file_delete_error_message(file_delete_result['failed'])}), 500
+
         placeholders = ','.join(['?' for _ in novel_ids])
         cursor.execute(f'DELETE FROM novels WHERE id IN ({placeholders})', novel_ids)
 
         conn.commit()
-        return jsonify({'success': True, 'data': {'deleted': cursor.rowcount}})
+        return jsonify({
+            'success': True,
+            'data': {
+                'deleted': cursor.rowcount,
+                'deleted_files': len(file_delete_result['deleted']),
+                'missing_files': len(file_delete_result['missing']),
+                'shared_files': len(shared_paths)
+            }
+        })
     except Exception as e:
         conn.rollback()
         return jsonify({'success': False, 'message': str(e)}), 500
     finally:
         conn.close()
-
 
 # ==================== 启动 ====================
 

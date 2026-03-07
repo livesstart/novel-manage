@@ -1268,6 +1268,20 @@ body {
     transition: width 0.25s ease;
 }
 
+.batch-ai-options {
+    margin-bottom: 16px;
+    padding: 14px 16px;
+    border: 1px solid var(--border-color);
+    border-radius: 18px;
+    background: rgba(255, 255, 255, 0.92);
+    box-shadow: var(--shadow-soft);
+}
+
+.batch-ai-options .form-hint {
+    display: block;
+    margin-top: 8px;
+}
+
 .batch-ai-layout {
     display: grid;
     grid-template-columns: 320px minmax(0, 1fr);
