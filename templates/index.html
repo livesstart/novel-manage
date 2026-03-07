@@ -727,6 +727,63 @@
         </div>
     </div>
 
+    <!-- 爬虫任务弹窗 -->
+    <div class="modal" id="crawler-task-modal">
+        <div class="modal-content modal-lg">
+            <div class="modal-header">
+                <h3 id="crawler-task-modal-title">新建爬虫任务</h3>
+                <button class="btn-close">&times;</button>
+            </div>
+            <div class="modal-body">
+                <form id="crawler-task-form">
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>任务名称 *</label>
+                            <input type="text" id="crawler-task-name" placeholder="例如：抓取《凡人修仙传》目录页" required>
+                        </div>
+                        <div class="form-group">
+                            <label>作者</label>
+                            <input type="text" id="crawler-task-author" placeholder="可选">
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>抓取链接 *</label>
+                        <input type="url" id="crawler-task-source-url" placeholder="https://example.com/book/123" required>
+                        <small class="form-hint">支持正文页、目录页，或可直接下载的 txt 链接</small>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>书名</label>
+                            <input type="text" id="crawler-task-title" placeholder="留空时自动从页面提取">
+                        </div>
+                        <div class="form-group">
+                            <label>分类</label>
+                            <select id="crawler-task-category">
+                                <option value="">未分类</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>简介</label>
+                        <textarea id="crawler-task-description" rows="4" placeholder="可选，导入小说库时会写入简介"></textarea>
+                    </div>
+                    <div class="form-group">
+                        <label>标签</label>
+                        <div class="tag-selector compact" id="crawler-task-tag-selector"></div>
+                    </div>
+                    <label class="checkbox-label crawler-task-start-now">
+                        <input type="checkbox" id="crawler-task-start-immediately" checked>
+                        创建后立即开始抓取
+                    </label>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary btn-cancel">取消</button>
+                <button class="btn btn-primary" id="btn-save-crawler-task">保存任务</button>
+            </div>
+        </div>
+    </div>
+
     <!-- 文件输入（隐藏） -->
     <input type="file" id="file-input" accept=".txt,.epub,.pdf,.mobi,.azw3,.doc,.docx,.rtf" style="display: none;">
 

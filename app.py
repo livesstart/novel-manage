@@ -5,10 +5,14 @@ import json
 import os
 import sqlite3
 import re
+import html
+import threading
 from datetime import datetime
 from pathlib import Path
+from urllib.parse import urljoin, urlparse, unquote
 from flask import Flask, render_template, jsonify, request, send_file
 from flask_cors import CORS
+import requests
 
 # ??????????
 NOVEL_EXTENSIONS = {'.txt', '.epub', '.pdf', '.mobi', '.azw3', '.doc', '.docx', '.rtf'}
@@ -20,6 +24,11 @@ DATABASE = 'novels.db'
 APP_ROOT = Path(__file__).resolve().parent
 UPLOAD_ROOT = APP_ROOT / 'library'
 TEXT_READABLE_EXTENSIONS = {'.txt'}
+CRAWLER_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0 Safari/537.36'
+CRAWLER_STATUSES = {'pending', 'running', 'completed', 'failed'}
+
+crawler_threads = {}
+crawler_threads_lock = threading.Lock()
 
 
 def get_db():
@@ -92,6 +101,33 @@ def init_db():
         WHERE novel_id NOT IN (SELECT id FROM novels)
            OR tag_id NOT IN (SELECT id FROM tags)
     ''')
+
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS crawler_tasks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            source_url TEXT NOT NULL,
+            title TEXT,
+            author TEXT,
+            description TEXT,
+            category_id INTEGER,
+            tag_ids_json TEXT DEFAULT '[]',
+            status TEXT DEFAULT 'pending',
+            progress INTEGER DEFAULT 0,
+            total_chapters INTEGER DEFAULT 0,
+            crawled_chapters INTEGER DEFAULT 0,
+            novel_id INTEGER,
+            file_path TEXT,
+            last_error TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            started_at TIMESTAMP,
+            finished_at TIMESTAMP,
+            FOREIGN KEY (category_id) REFERENCES categories(id) ON DELETE SET NULL,
+            FOREIGN KEY (novel_id) REFERENCES novels(id) ON DELETE SET NULL
+        )
+    ''')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_crawler_tasks_status_updated ON crawler_tasks(status, updated_at DESC)')
 
     conn.commit()
     conn.close()
@@ -1632,6 +1668,565 @@ def generate_novel_metadata():
     except Exception as e:
         return jsonify({'success': False, 'message': str(e)}), 500
 
+
+
+def _now_timestamp():
+    return datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+
+def _safe_json_list(value):
+    if isinstance(value, list):
+        return value
+    if not value:
+        return []
+    try:
+        parsed = json.loads(value)
+        return parsed if isinstance(parsed, list) else []
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return []
+
+
+def _serialize_crawler_task(row):
+    item = dict(row)
+    item['tag_ids'] = [int(tag_id) for tag_id in _safe_json_list(item.get('tag_ids_json')) if str(tag_id).isdigit()]
+    item.pop('tag_ids_json', None)
+    return item
+
+
+def _update_crawler_task(task_id, **fields):
+    if not fields:
+        return
+
+    conn = get_db()
+    cursor = conn.cursor()
+
+    assignments = []
+    params = []
+    for key, value in fields.items():
+        assignments.append(f'{key} = ?')
+        params.append(value)
+
+    assignments.append('updated_at = ?')
+    params.append(_now_timestamp())
+    params.append(task_id)
+
+    cursor.execute(f"UPDATE crawler_tasks SET {', '.join(assignments)} WHERE id = ?", params)
+    conn.commit()
+    conn.close()
+
+
+def _fetch_crawler_task(task_id):
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute('''
+        SELECT ct.*, c.name AS category_name, n.title AS novel_title
+        FROM crawler_tasks ct
+        LEFT JOIN categories c ON ct.category_id = c.id
+        LEFT JOIN novels n ON ct.novel_id = n.id
+        WHERE ct.id = ?
+    ''', (task_id,))
+    row = cursor.fetchone()
+    conn.close()
+    return _serialize_crawler_task(row) if row else None
+
+
+def _guess_title_from_url(url):
+    parsed = urlparse(url)
+    name = Path(unquote(parsed.path or '')).stem
+    name = re.sub(r'[-_]+', ' ', name).strip()
+    return name or parsed.netloc or '未命名小说'
+
+
+def _request_url(url):
+    response = requests.get(
+        url,
+        headers={'User-Agent': CRAWLER_USER_AGENT},
+        timeout=20
+    )
+    response.raise_for_status()
+    if not response.encoding or response.encoding.lower() == 'iso-8859-1':
+        response.encoding = response.apparent_encoding or 'utf-8'
+    return response
+
+
+def _extract_balanced_tag_block(html_text, start_index, tag_name):
+    open_pattern = re.compile(rf'<{tag_name}\b', re.IGNORECASE)
+    close_pattern = re.compile(rf'</{tag_name}\s*>', re.IGNORECASE)
+    first_open = open_pattern.search(html_text, start_index)
+    if not first_open:
+        return ''
+
+    depth = 1
+    position = first_open.end()
+
+    while True:
+        next_open = open_pattern.search(html_text, position)
+        next_close = close_pattern.search(html_text, position)
+        if not next_close:
+            return html_text[first_open.start():]
+        if next_open and next_open.start() < next_close.start():
+            depth += 1
+            position = next_open.end()
+            continue
+        depth -= 1
+        position = next_close.end()
+        if depth == 0:
+            return html_text[first_open.start():position]
+
+
+def _html_to_text(raw_html):
+    text = re.sub(r'(?is)<(script|style|noscript|iframe).*?>.*?</\1>', '\n', raw_html)
+    text = re.sub(r'(?is)<!--.*?-->', '\n', text)
+    text = re.sub(r'(?i)<br\s*/?>', '\n', text)
+    text = re.sub(r'(?i)</(p|div|h1|h2|h3|h4|li|tr|section|article|dd|dt)>', '\n', text)
+    text = re.sub(r'(?is)<[^>]+>', '', text)
+    text = html.unescape(text)
+
+    lines = []
+    for raw_line in text.splitlines():
+        line = re.sub(r'\s+', ' ', raw_line).strip()
+        if not line:
+            if lines and lines[-1] != '':
+                lines.append('')
+            continue
+        if line in {'目录', '返回目录', '下一章', '上一章', '加入书签'}:
+            continue
+        lines.append(line)
+
+    compact = []
+    last_blank = False
+    for line in lines:
+        if line == '':
+            if compact and not last_blank:
+                compact.append('')
+            last_blank = True
+            continue
+        compact.append(line)
+        last_blank = False
+
+    return '\n'.join(compact).strip()
+
+
+def _extract_preferred_html_block(raw_html):
+    lower_html = raw_html.lower()
+    keywords = [
+        'id="content"', "id='content'",
+        'id="chaptercontent"', "id='chaptercontent'",
+        'id="readcontent"', "id='readcontent'",
+        'id="txt"', "id='txt'",
+        'class="content"', "class='content'",
+        'class="chapter"', "class='chapter'",
+        'class="article"', "class='article'",
+        'class="read-content"', "class='read-content'",
+        'class="bookcontent"', "class='bookcontent'",
+    ]
+
+    for keyword in keywords:
+        keyword_index = lower_html.find(keyword)
+        if keyword_index == -1:
+            continue
+        for tag_name in ('div', 'article', 'section', 'td'):
+            tag_start = lower_html.rfind(f'<{tag_name}', 0, keyword_index)
+            if tag_start != -1:
+                block = _extract_balanced_tag_block(raw_html, tag_start, tag_name)
+                if block:
+                    return block
+
+    body_match = re.search(r'(?is)<body[^>]*>(.*)</body>', raw_html)
+    if body_match:
+        return body_match.group(1)
+
+    return raw_html
+
+
+def _extract_main_text(raw_html):
+    block = _extract_preferred_html_block(raw_html)
+    text = _html_to_text(block)
+    if len(text) >= 120:
+        return text
+    return _html_to_text(raw_html)
+
+
+def _extract_page_title(raw_html):
+    for pattern in (
+        r'(?is)<h1[^>]*>(.*?)</h1>',
+        r'(?is)<title[^>]*>(.*?)</title>'
+    ):
+        match = re.search(pattern, raw_html)
+        if not match:
+            continue
+        title = _html_to_text(match.group(1))
+        title = re.sub(r'\s+', ' ', title).strip(' -_|')
+        if title:
+            return title
+    return ''
+
+
+def _extract_chapter_links(raw_html, base_url):
+    link_pattern = re.compile(r'(?is)<a[^>]+href=["\']([^"\']+)["\'][^>]*>(.*?)</a>')
+    base_host = urlparse(base_url).netloc
+    links = []
+    seen = set()
+
+    for href, label_html in link_pattern.findall(raw_html):
+        href = html.unescape((href or '').strip())
+        if not href or href.startswith(('javascript:', '#', 'mailto:')):
+            continue
+
+        full_url = urljoin(base_url, href)
+        parsed = urlparse(full_url)
+        if parsed.scheme not in ('http', 'https'):
+            continue
+        if base_host and parsed.netloc and parsed.netloc != base_host:
+            continue
+
+        full_url = full_url.split('#', 1)[0]
+        if full_url == base_url:
+            continue
+
+        label = _html_to_text(label_html)
+        label = re.sub(r'\s+', ' ', label).strip()
+        if not label or len(label) > 64:
+            continue
+
+        text_match = re.search(r'(第.{0,12}[章节回卷集部篇]|chapter\s*\d+|序章|楔子|尾声|终章|番外)', label, re.IGNORECASE)
+        href_match = re.search(r'(chapter|read|book|\d{2,}|\.html?$)', parsed.path, re.IGNORECASE)
+        if not (text_match or href_match):
+            continue
+
+        dedupe_key = full_url.lower()
+        if dedupe_key in seen:
+            continue
+        seen.add(dedupe_key)
+        links.append({'url': full_url, 'title': label})
+
+    return links
+
+
+def _store_crawled_text(title, content):
+    target_rel = Path('crawlers') / sanitize_relative_storage_path(f'{sanitize_storage_name(title)}.txt')
+    target_abs = UPLOAD_ROOT / target_rel
+    target_abs.parent.mkdir(parents=True, exist_ok=True)
+
+    final_rel = target_rel
+    final_abs = target_abs
+    counter = 1
+    while final_abs.exists():
+        final_rel = target_rel.with_name(f'{target_rel.stem}_{counter}{target_rel.suffix}')
+        final_abs = UPLOAD_ROOT / final_rel
+        counter += 1
+
+    with open(final_abs, 'w', encoding='utf-8') as output_file:
+        output_file.write(content)
+
+    return str(Path('library') / final_rel).replace('\\', '/')
+
+
+def _save_crawler_novel(task, crawl_result):
+    conn = get_db()
+    cursor = conn.cursor()
+
+    file_path = _store_crawled_text(crawl_result['title'], crawl_result['content'])
+    title = crawl_result['title']
+    author = crawl_result.get('author') or task.get('author') or ''
+    description = task.get('description') or ''
+    category_id = task.get('category_id')
+    novel_id = task.get('novel_id')
+
+    try:
+        existing_novel_id = None
+        if novel_id:
+            cursor.execute('SELECT id FROM novels WHERE id = ?', (novel_id,))
+            existing = cursor.fetchone()
+            if existing:
+                existing_novel_id = existing['id']
+
+        if existing_novel_id:
+            cursor.execute('''
+                UPDATE novels
+                SET title = ?, author = ?, description = ?, file_path = ?, category_id = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+            ''', (title, author, description, file_path, category_id, existing_novel_id))
+            novel_id = existing_novel_id
+            cursor.execute('DELETE FROM novel_tags WHERE novel_id = ?', (novel_id,))
+        else:
+            cursor.execute('''
+                INSERT INTO novels (title, author, description, file_path, category_id, status)
+                VALUES (?, ?, ?, ?, ?, 0)
+            ''', (title, author, description, file_path, category_id))
+            novel_id = cursor.lastrowid
+
+        for tag_id in task.get('tag_ids', []):
+            cursor.execute('INSERT OR IGNORE INTO novel_tags (novel_id, tag_id) VALUES (?, ?)', (novel_id, tag_id))
+
+        conn.commit()
+        return novel_id, file_path
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def _crawl_task_content(task_id, task):
+    response = _request_url(task['source_url'])
+    content_type = (response.headers.get('Content-Type') or '').lower()
+
+    if 'text/plain' in content_type or task['source_url'].lower().endswith('.txt'):
+        text_content = response.text.strip()
+        if not text_content:
+            raise RuntimeError('抓取结果为空，请检查链接是否可直接访问文本内容')
+        return {
+            'title': task.get('title') or _guess_title_from_url(task['source_url']),
+            'author': task.get('author') or '',
+            'content': text_content,
+            'chapter_count': 1
+        }
+
+    raw_html = response.text
+    chapter_links = _extract_chapter_links(raw_html, task['source_url'])
+    title = task.get('title') or _extract_page_title(raw_html) or _guess_title_from_url(task['source_url'])
+
+    if len(chapter_links) >= 2:
+        total = min(len(chapter_links), 500)
+        _update_crawler_task(task_id, total_chapters=total, crawled_chapters=0, progress=0)
+        sections = []
+
+        for index, chapter in enumerate(chapter_links[:total], start=1):
+            chapter_response = _request_url(chapter['url'])
+            chapter_title = chapter.get('title') or _extract_page_title(chapter_response.text) or f'第{index}章'
+            chapter_text = _extract_main_text(chapter_response.text)
+            if chapter_text:
+                sections.append(f'{chapter_title}\n\n{chapter_text}')
+            _update_crawler_task(
+                task_id,
+                total_chapters=total,
+                crawled_chapters=index,
+                progress=int(index * 100 / total)
+            )
+
+        if not sections:
+            raise RuntimeError('未能从目录页抓取到有效章节内容，请换一个目录页链接重试')
+
+        return {
+            'title': title,
+            'author': task.get('author') or '',
+            'content': '\n\n'.join(sections),
+            'chapter_count': len(sections)
+        }
+
+    main_text = _extract_main_text(raw_html)
+    if len(main_text) < 80:
+        raise RuntimeError('未能提取正文内容，请确认链接为小说详情页、目录页或正文页')
+
+    _update_crawler_task(task_id, total_chapters=1, crawled_chapters=1, progress=100)
+    return {
+        'title': title,
+        'author': task.get('author') or '',
+        'content': main_text,
+        'chapter_count': 1
+    }
+
+
+def _run_crawler_task(task_id):
+    try:
+        task = _fetch_crawler_task(task_id)
+        if not task:
+            return
+
+        _update_crawler_task(
+            task_id,
+            status='running',
+            progress=0,
+            total_chapters=0,
+            crawled_chapters=0,
+            last_error=None,
+            started_at=_now_timestamp(),
+            finished_at=None
+        )
+
+        crawl_result = _crawl_task_content(task_id, task)
+        novel_id, file_path = _save_crawler_novel(task, crawl_result)
+
+        _update_crawler_task(
+            task_id,
+            title=crawl_result['title'],
+            author=crawl_result.get('author') or task.get('author') or '',
+            status='completed',
+            progress=100,
+            total_chapters=crawl_result['chapter_count'],
+            crawled_chapters=crawl_result['chapter_count'],
+            novel_id=novel_id,
+            file_path=file_path,
+            last_error=None,
+            finished_at=_now_timestamp()
+        )
+    except Exception as error:
+        _update_crawler_task(
+            task_id,
+            status='failed',
+            last_error=str(error),
+            finished_at=_now_timestamp()
+        )
+    finally:
+        with crawler_threads_lock:
+            crawler_threads.pop(task_id, None)
+
+
+def _start_crawler_thread(task_id):
+    with crawler_threads_lock:
+        existing_thread = crawler_threads.get(task_id)
+        if existing_thread and existing_thread.is_alive():
+            return False
+
+        worker = threading.Thread(target=_run_crawler_task, args=(task_id,), daemon=True)
+        crawler_threads[task_id] = worker
+        worker.start()
+        return True
+
+
+@app.route('/api/crawler/stats', methods=['GET'])
+def get_crawler_stats():
+    conn = get_db()
+    cursor = conn.cursor()
+
+    cursor.execute('SELECT COUNT(*) AS total FROM crawler_tasks')
+    total_tasks = cursor.fetchone()['total']
+    cursor.execute("SELECT COUNT(*) AS total FROM crawler_tasks WHERE status = 'running'")
+    running_tasks = cursor.fetchone()['total']
+    cursor.execute("SELECT COUNT(*) AS total FROM crawler_tasks WHERE status = 'completed'")
+    completed_tasks = cursor.fetchone()['total']
+    cursor.execute('SELECT COUNT(DISTINCT novel_id) AS total FROM crawler_tasks WHERE novel_id IS NOT NULL')
+    downloaded_novels = cursor.fetchone()['total']
+    conn.close()
+
+    return jsonify({
+        'success': True,
+        'data': {
+            'total_tasks': total_tasks,
+            'running_tasks': running_tasks,
+            'completed_tasks': completed_tasks,
+            'downloaded_novels': downloaded_novels
+        }
+    })
+
+
+@app.route('/api/crawler/tasks', methods=['GET'])
+def get_crawler_tasks():
+    keyword = (request.args.get('keyword') or '').strip()
+    status = (request.args.get('status') or '').strip()
+
+    conn = get_db()
+    cursor = conn.cursor()
+
+    query = '''
+        SELECT ct.*, c.name AS category_name, n.title AS novel_title
+        FROM crawler_tasks ct
+        LEFT JOIN categories c ON ct.category_id = c.id
+        LEFT JOIN novels n ON ct.novel_id = n.id
+        WHERE 1 = 1
+    '''
+    params = []
+
+    if keyword:
+        query += ' AND (ct.name LIKE ? OR ct.title LIKE ? OR ct.author LIKE ? OR ct.source_url LIKE ?)'
+        keyword_like = f'%{keyword}%'
+        params.extend([keyword_like, keyword_like, keyword_like, keyword_like])
+
+    if status in CRAWLER_STATUSES:
+        query += ' AND ct.status = ?'
+        params.append(status)
+
+    query += ' ORDER BY CASE ct.status WHEN "running" THEN 0 WHEN "failed" THEN 1 ELSE 2 END, ct.updated_at DESC, ct.id DESC'
+    cursor.execute(query, params)
+    rows = cursor.fetchall()
+    conn.close()
+
+    return jsonify({'success': True, 'data': [_serialize_crawler_task(row) for row in rows]})
+
+
+@app.route('/api/crawler/tasks', methods=['POST'])
+def create_crawler_task():
+    data = request.get_json(silent=True) or {}
+    source_url = (data.get('source_url') or '').strip()
+    if not source_url:
+        return jsonify({'success': False, 'message': '请填写要抓取的网页链接'}), 400
+    if not source_url.startswith(('http://', 'https://')):
+        return jsonify({'success': False, 'message': '链接必须以 http:// 或 https:// 开头'}), 400
+
+    tag_ids = []
+    for value in data.get('tag_ids', []):
+        try:
+            tag_ids.append(int(value))
+        except (TypeError, ValueError):
+            continue
+
+    category_id = data.get('category_id')
+    if category_id in ('', None):
+        category_id = None
+    else:
+        try:
+            category_id = int(category_id)
+        except (TypeError, ValueError):
+            return jsonify({'success': False, 'message': '分类参数无效'}), 400
+
+    name = (data.get('name') or data.get('title') or _guess_title_from_url(source_url)).strip()
+
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute('''
+        INSERT INTO crawler_tasks (name, source_url, title, author, description, category_id, tag_ids_json, status, progress)
+        VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', 0)
+    ''', (
+        name,
+        source_url,
+        (data.get('title') or '').strip(),
+        (data.get('author') or '').strip(),
+        (data.get('description') or '').strip(),
+        category_id,
+        json.dumps(sorted(set(tag_ids)))
+    ))
+    task_id = cursor.lastrowid
+    conn.commit()
+    conn.close()
+
+    if bool(data.get('start_immediately', True)):
+        _start_crawler_thread(task_id)
+
+    return jsonify({'success': True, 'data': _fetch_crawler_task(task_id)})
+
+
+@app.route('/api/crawler/tasks/<int:task_id>/run', methods=['POST'])
+def run_crawler_task(task_id):
+    task = _fetch_crawler_task(task_id)
+    if not task:
+        return jsonify({'success': False, 'message': '爬虫任务不存在'}), 404
+
+    if task['status'] == 'running':
+        return jsonify({'success': False, 'message': '任务已在运行中'}), 400
+
+    if not _start_crawler_thread(task_id):
+        return jsonify({'success': False, 'message': '任务启动失败，请稍后重试'}), 400
+
+    return jsonify({'success': True, 'message': '任务已启动'})
+
+
+@app.route('/api/crawler/tasks/<int:task_id>', methods=['DELETE'])
+def delete_crawler_task(task_id):
+    task = _fetch_crawler_task(task_id)
+    if not task:
+        return jsonify({'success': False, 'message': '爬虫任务不存在'}), 404
+
+    if task['status'] == 'running':
+        return jsonify({'success': False, 'message': '运行中的任务暂不支持删除，请稍后重试'}), 400
+
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute('DELETE FROM crawler_tasks WHERE id = ?', (task_id,))
+    conn.commit()
+    conn.close()
+
+    return jsonify({'success': True})
 
 
 def scan_folder(folder_path, create_category_from_folder=True):

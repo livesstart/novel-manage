@@ -277,6 +277,7 @@ function renderTags() {
 function updateCategorySelects() {
     const filterSelect = document.getElementById('filter-category');
     const novelSelect = document.getElementById('novel-category');
+    const crawlerSelect = document.getElementById('crawler-task-category');
 
     const options = state.categories.map(cat =>
         `<option value="${cat.id}">${escapeHtml(cat.name)}</option>`
@@ -284,6 +285,9 @@ function updateCategorySelects() {
 
     filterSelect.innerHTML = '<option value="">全部分类</option>' + options;
     novelSelect.innerHTML = '<option value="">无分类</option>' + options;
+    if (crawlerSelect) {
+        crawlerSelect.innerHTML = '<option value="">未分类</option>' + options;
+    }
 }
 
 // 更新标签选择器
@@ -309,6 +313,11 @@ function updateTagSelectors() {
             ${escapeHtml(tag.name)}
         </span>
     `).join('');
+
+    const crawlerTagSelector = document.getElementById('crawler-task-tag-selector');
+    if (crawlerTagSelector) {
+        renderCrawlerTagSelector();
+    }
 }
 
 // 切换筛选标签
@@ -998,10 +1007,18 @@ function switchView(viewName) {
     const batchImportBtn = document.getElementById('btn-batch-import');
     batchImportBtn.style.display = viewName === 'novels' ? 'flex' : 'none';
 
+    if (viewName === 'novels') {
+        loadStats();
+        applyFilters();
+    }
+
     // 加载爬虫数据
     if (viewName === 'crawler') {
         loadCrawlerStats();
         loadCrawlerTasks();
+        startCrawlerAutoRefresh();
+    } else {
+        stopCrawlerAutoRefresh();
     }
 
     // 加载 AI 配置数据
@@ -1016,32 +1033,275 @@ function switchView(viewName) {
 const crawlerState = {
     tasks: [],
     filter: '',
-    statusFilter: ''
+    statusFilter: '',
+    refreshTimer: null
 };
 
 async function loadCrawlerStats() {
-    // 模拟数据，后续可以接入真实API
-    document.getElementById('crawler-total-tasks').textContent = '0';
-    document.getElementById('crawler-running-tasks').textContent = '0';
-    document.getElementById('crawler-completed-tasks').textContent = '0';
-    document.getElementById('crawler-downloaded-novels').textContent = '0';
+    try {
+        const res = await api.get('/api/crawler/stats');
+        if (!res.success) {
+            throw new Error(res.message || '加载失败');
+        }
+
+        document.getElementById('crawler-total-tasks').textContent = res.data.total_tasks ?? 0;
+        document.getElementById('crawler-running-tasks').textContent = res.data.running_tasks ?? 0;
+        document.getElementById('crawler-completed-tasks').textContent = res.data.completed_tasks ?? 0;
+        document.getElementById('crawler-downloaded-novels').textContent = res.data.downloaded_novels ?? 0;
+    } catch (err) {
+        console.error('加载爬虫统计失败:', err);
+        document.getElementById('crawler-total-tasks').textContent = '0';
+        document.getElementById('crawler-running-tasks').textContent = '0';
+        document.getElementById('crawler-completed-tasks').textContent = '0';
+        document.getElementById('crawler-downloaded-novels').textContent = '0';
+    }
 }
 
 async function loadCrawlerTasks() {
     const container = document.getElementById('crawler-tasks-list');
 
-    // 模拟空状态
-    container.innerHTML = `
-        <div class="empty-state">
-            <i class="fas fa-spider"></i>
-            <h3>暂无爬虫任务</h3>
-            <p>点击"新建爬虫任务"按钮添加爬虫</p>
-        </div>
-    `;
+    try {
+        const params = new URLSearchParams();
+        if (crawlerState.filter) params.append('keyword', crawlerState.filter);
+        if (crawlerState.statusFilter) params.append('status', crawlerState.statusFilter);
+
+        const res = await api.get(`/api/crawler/tasks?${params.toString()}`);
+        if (!res.success) {
+            throw new Error(res.message || '加载失败');
+        }
+
+        crawlerState.tasks = res.data || [];
+        renderCrawlerTasks();
+    } catch (err) {
+        console.error('加载爬虫任务失败:', err);
+        container.innerHTML = `
+            <div class="empty-state">
+                <i class="fas fa-bug"></i>
+                <h3>加载失败</h3>
+                <p>${escapeHtml(err.message || '请稍后重试')}</p>
+            </div>
+        `;
+    }
 }
 
 function openAddCrawlerTaskModal() {
-    showToast('爬虫功能开发中...', 'success');
+    resetCrawlerTaskModal();
+    openModal('crawler-task-modal');
+}
+
+function resetCrawlerTaskModal() {
+    document.getElementById('crawler-task-modal-title').textContent = '新建爬虫任务';
+    document.getElementById('crawler-task-form').reset();
+    document.getElementById('crawler-task-start-immediately').checked = true;
+    renderCrawlerTagSelector();
+    updateCategorySelects();
+}
+
+function renderCrawlerTagSelector(selectedTagIds = []) {
+    const container = document.getElementById('crawler-task-tag-selector');
+    if (!container) return;
+
+    const selectedSet = new Set((selectedTagIds || []).map(id => Number(id)));
+    if (state.tags.length === 0) {
+        container.innerHTML = '<span class="form-hint">暂无标签，可先在标签管理中创建</span>';
+        return;
+    }
+
+    container.innerHTML = state.tags.map(tag => `
+        <span class="crawler-tag-option ${selectedSet.has(Number(tag.id)) ? 'selected' : ''}"
+              data-id="${tag.id}"
+              style="border-color: ${selectedSet.has(Number(tag.id)) ? tag.color : ''}; color: ${selectedSet.has(Number(tag.id)) ? tag.color : ''};"
+              onclick="toggleCrawlerTaskTag(this)">
+            <i class="fas fa-tag"></i>
+            ${escapeHtml(tag.name)}
+        </span>
+    `).join('');
+}
+
+function toggleCrawlerTaskTag(element) {
+    element.classList.toggle('selected');
+}
+
+function getSelectedCrawlerTagIds() {
+    return Array.from(document.querySelectorAll('#crawler-task-tag-selector .crawler-tag-option.selected'))
+        .map(item => Number(item.dataset.id))
+        .filter(Boolean);
+}
+
+function renderCrawlerTasks() {
+    const container = document.getElementById('crawler-tasks-list');
+    if (!crawlerState.tasks.length) {
+        container.innerHTML = `
+            <div class="empty-state">
+                <i class="fas fa-spider"></i>
+                <h3>暂无爬虫任务</h3>
+                <p>点击“新建爬虫任务”后即可抓取目录页、正文页或 txt 链接</p>
+            </div>
+        `;
+        return;
+    }
+
+    container.innerHTML = crawlerState.tasks.map(task => {
+        const progress = Number(task.progress || 0);
+        const totalChapters = Number(task.total_chapters || 0);
+        const crawledChapters = Number(task.crawled_chapters || 0);
+        const progressText = totalChapters > 1
+            ? `${progress}% · ${crawledChapters}/${totalChapters} 章`
+            : `${progress}%`;
+
+        return `
+            <div class="crawler-task-item">
+                <span class="crawler-task-status status-${escapeHtml(task.status)}"></span>
+                <div class="crawler-task-info">
+                    <div class="crawler-task-name-row">
+                        <div class="crawler-task-name">${escapeHtml(task.name || task.title || '未命名任务')}</div>
+                        <span class="crawler-task-badge">${escapeHtml(getCrawlerStatusText(task.status))}</span>
+                        ${task.novel_id ? '<span class="crawler-task-badge">已入库</span>' : ''}
+                    </div>
+                    <div class="crawler-task-meta">
+                        <span>书名：${escapeHtml(task.title || '自动提取')}</span>
+                        <span>作者：${escapeHtml(task.author || '未填写')}</span>
+                        <span>分类：${escapeHtml(task.category_name || '未分类')}</span>
+                        <span>更新时间：${escapeHtml(formatCrawlerDateTime(task.updated_at))}</span>
+                    </div>
+                    <div class="crawler-task-link">${escapeHtml(task.source_url || '')}</div>
+                    ${task.last_error ? `<div class="crawler-task-error">失败原因：${escapeHtml(task.last_error)}</div>` : ''}
+                </div>
+                <div class="crawler-task-progress">
+                    <div class="progress-bar">
+                        <div class="progress-fill" style="width: ${Math.max(0, Math.min(progress, 100))}%"></div>
+                    </div>
+                    <div class="progress-text">${escapeHtml(progressText)}</div>
+                </div>
+                <div class="crawler-task-actions">
+                    <button class="btn btn-secondary" onclick="startCrawlerTask(${task.id})" ${task.status === 'running' ? 'disabled' : ''}>
+                        <i class="fas fa-${task.status === 'failed' ? 'rotate-right' : 'play'}"></i>
+                        ${task.status === 'failed' ? '重试' : task.status === 'completed' ? '重新抓取' : '开始'}
+                    </button>
+                    <button class="btn btn-danger" onclick="deleteCrawlerTask(${task.id})" ${task.status === 'running' ? 'disabled' : ''}>
+                        <i class="fas fa-trash"></i>
+                        删除
+                    </button>
+                </div>
+            </div>
+        `;
+    }).join('');
+}
+
+function getCrawlerStatusText(status) {
+    return {
+        pending: '等待中',
+        running: '抓取中',
+        completed: '已完成',
+        failed: '失败'
+    }[status] || '未知';
+}
+
+function formatCrawlerDateTime(value) {
+    if (!value) return '--';
+    const parsed = new Date(String(value).replace(' ', 'T'));
+    if (Number.isNaN(parsed.getTime())) {
+        return value;
+    }
+    return parsed.toLocaleString('zh-CN', { hour12: false });
+}
+
+async function saveCrawlerTask() {
+    const sourceUrl = document.getElementById('crawler-task-source-url').value.trim();
+    const name = document.getElementById('crawler-task-name').value.trim();
+
+    if (!name) {
+        showToast('请输入任务名称', 'error');
+        return;
+    }
+    if (!sourceUrl) {
+        showToast('请输入抓取链接', 'error');
+        return;
+    }
+
+    const saveButton = document.getElementById('btn-save-crawler-task');
+    const originalHtml = saveButton.innerHTML;
+    saveButton.disabled = true;
+    saveButton.innerHTML = '<span class="loading"></span> 保存中';
+
+    try {
+        const res = await api.post('/api/crawler/tasks', {
+            name,
+            source_url: sourceUrl,
+            title: document.getElementById('crawler-task-title').value.trim(),
+            author: document.getElementById('crawler-task-author').value.trim(),
+            description: document.getElementById('crawler-task-description').value.trim(),
+            category_id: document.getElementById('crawler-task-category').value,
+            tag_ids: getSelectedCrawlerTagIds(),
+            start_immediately: document.getElementById('crawler-task-start-immediately').checked
+        });
+
+        if (!res.success) {
+            throw new Error(res.message || '保存失败');
+        }
+
+        closeModal('crawler-task-modal');
+        await Promise.all([loadCrawlerStats(), loadCrawlerTasks(), loadNovels(), loadStats()]);
+        showToast(
+            document.getElementById('crawler-task-start-immediately').checked ? '任务已创建并开始抓取' : '任务已创建',
+            'success'
+        );
+    } catch (err) {
+        console.error('保存爬虫任务失败:', err);
+        showToast(err.message || '保存失败', 'error');
+    } finally {
+        saveButton.disabled = false;
+        saveButton.innerHTML = originalHtml;
+    }
+}
+
+async function startCrawlerTask(taskId) {
+    try {
+        const res = await api.post(`/api/crawler/tasks/${taskId}/run`, {});
+        if (!res.success) {
+            throw new Error(res.message || '启动失败');
+        }
+
+        await Promise.all([loadCrawlerStats(), loadCrawlerTasks()]);
+        showToast('爬虫任务已启动', 'success');
+    } catch (err) {
+        console.error('启动爬虫任务失败:', err);
+        showToast(err.message || '启动失败', 'error');
+    }
+}
+
+async function deleteCrawlerTask(taskId) {
+    if (!confirm('确定要删除这个爬虫任务吗？')) return;
+
+    try {
+        const res = await api.delete(`/api/crawler/tasks/${taskId}`);
+        if (!res.success) {
+            throw new Error(res.message || '删除失败');
+        }
+
+        await Promise.all([loadCrawlerStats(), loadCrawlerTasks()]);
+        showToast('爬虫任务已删除', 'success');
+    } catch (err) {
+        console.error('删除爬虫任务失败:', err);
+        showToast(err.message || '删除失败', 'error');
+    }
+}
+
+function startCrawlerAutoRefresh() {
+    stopCrawlerAutoRefresh();
+    crawlerState.refreshTimer = setInterval(() => {
+        if (state.currentView === 'crawler') {
+            loadCrawlerStats();
+            loadCrawlerTasks();
+        }
+    }, 4000);
+}
+
+function stopCrawlerAutoRefresh() {
+    if (crawlerState.refreshTimer) {
+        clearInterval(crawlerState.refreshTimer);
+        crawlerState.refreshTimer = null;
+    }
 }
 
 // ==================== AI 配置功能 ====================
@@ -2371,6 +2631,9 @@ function bindEvents() {
 
     // 新建爬虫任务
     document.getElementById('btn-add-crawler-task').addEventListener('click', openAddCrawlerTaskModal);
+
+    // 保存爬虫任务
+    document.getElementById('btn-save-crawler-task').addEventListener('click', saveCrawlerTask);
 
     // 爬虫任务筛选
     document.getElementById('crawler-status-filter').addEventListener('change', (e) => {
