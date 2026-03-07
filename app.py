@@ -376,6 +376,7 @@ def get_novels():
     category_id = request.args.get('category_id', '')
     tag_ids = request.args.getlist('tag_ids')
     status = request.args.get('status', '')
+    untagged_only = request.args.get('untagged_only', '').strip().lower() in {'1', 'true', 'yes', 'on'}
 
     query = '''
         SELECT n.*, c.name as category_name
@@ -396,6 +397,9 @@ def get_novels():
     if status:
         query += ' AND n.status = ?'
         params.append(status)
+
+    if untagged_only:
+        query += ' AND NOT EXISTS (SELECT 1 FROM novel_tags nt WHERE nt.novel_id = n.id)'
 
     # 如果有标签筛选，使用子查询
     if tag_ids:

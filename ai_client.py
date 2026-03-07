@@ -1049,6 +1049,7 @@ class AIClientFactory:
         'gemini': GeminiClient,
         'gemini-native': GeminiNativeClient,
         'openai-compatible': OpenAICompatibleClient,
+        'new-api': OpenAICompatibleClient,
     }
 
     @classmethod
@@ -1070,7 +1071,7 @@ class AIClientFactory:
         try:
             if provider == 'openai':
                 models = _discover_openai_models(config)
-            elif provider == 'openai-compatible':
+            elif provider in ('openai-compatible', 'new-api'):
                 models = _discover_openai_compatible_models(config)
             elif provider in ('gemini', 'gemini-native'):
                 models = _discover_gemini_models(config)
@@ -1093,6 +1094,7 @@ class AIClientFactory:
         return [
             {'id': 'openai', 'name': 'OpenAI', 'models': ['gpt-3.5-turbo', 'gpt-4', 'gpt-4-turbo', 'gpt-4o']},
             {'id': 'openai-compatible', 'name': 'OpenAI 兼容 API', 'models': ['qwen-turbo', 'qwen-plus', 'deepseek-chat', 'moonshot-v1-8k', 'gemini-2.5-flash', 'gemini-3-pro-preview']},
+            {'id': 'new-api', 'name': 'New API (Gateway)', 'models': ['gpt-4o', 'gpt-4o-mini', 'deepseek-chat', 'gemini-2.5-flash', 'claude-3-5-sonnet']},
             {'id': 'claude', 'name': 'Claude (Anthropic)', 'models': ['claude-3-opus-20240229', 'claude-3-sonnet-20240229', 'claude-3-haiku-20240307']},
             {'id': 'gemini', 'name': 'Google Gemini', 'models': ['gemini-2.5-flash', 'gemini-3-pro-preview', 'gemini-2.0-flash']},
             {'id': 'gemini-native', 'name': 'Google Gemini（原生）', 'models': ['gemini-2.5-flash', 'gemini-3-pro-preview', 'gemini-2.0-flash']},

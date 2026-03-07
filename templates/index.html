@@ -112,31 +112,46 @@
             <!-- 筛选栏 -->
             <div class="filter-bar">
                 <div class="filter-group">
-                    <label>分类:</label>
+                    <label>&#x5206;&#x7C7B;:</label>
                     <select id="filter-category">
-                        <option value="">全部</option>
+                        <option value="">&#x5168;&#x90E8;</option>
                     </select>
                 </div>
-                <div class="filter-group">
-                    <label>标签:</label>
-                    <div class="filter-tags" id="filter-tags">
-                        <!-- 动态加载 -->
+                <div class="filter-group filter-tags-group">
+                    <label>&#x6807;&#x7B7E;:</label>
+                    <div class="filter-tags-panel">
+                        <div class="filter-tags-toolbar">
+                            <div class="filter-tag-search-wrap">
+                                <i class="fas fa-search"></i>
+                                <input type="text" id="filter-tag-search" class="filter-tag-search" placeholder="&#x641C;&#x7D22;&#x6807;&#x7B7E;">
+                            </div>
+                            <button type="button" class="filter-tags-toggle" id="filter-tags-toggle" hidden>&#x5C55;&#x5F00;&#x66F4;&#x591A;</button>
+                            <button type="button" class="filter-tags-clear" id="filter-tags-clear" hidden>&#x6E05;&#x7A7A;&#x5DF2;&#x9009;</button>
+                        </div>
+                        <div class="filter-tags-summary" id="filter-tags-summary">&#x5171; 0 &#x4E2A;&#x6807;&#x7B7E;&#xFF0C;&#x5DF2;&#x9009; 0 &#x4E2A;</div>
+                        <div class="filter-tags" id="filter-tags">
+                            <!-- ???? -->
+                        </div>
                     </div>
                 </div>
                 <div class="filter-group">
-                    <label>状态:</label>
+                    <label>&#x72B6;&#x6001;:</label>
                     <select id="filter-status">
-                        <option value="">全部</option>
-                        <option value="0">未读</option>
-                        <option value="1">阅读中</option>
-                        <option value="2">已读完</option>
+                        <option value="">&#x5168;&#x90E8;</option>
+                        <option value="0">&#x672A;&#x8BFB;</option>
+                        <option value="1">&#x9605;&#x8BFB;&#x4E2D;</option>
+                        <option value="2">&#x5DF2;&#x8BFB;&#x5B8C;</option>
                     </select>
                 </div>
+                <div class="filter-group filter-untagged-group">
+                    <label class="checkbox-label">
+                        <input type="checkbox" id="filter-untagged-only">
+                        <span>&#x4EC5;&#x770B;&#x65E0;&#x6807;&#x7B7E;</span>
+                    </label>
+                </div>
+            </div>
             </div>
 
-            </div>
-
-            
                     <div class="novels-header">
                         <div class="novels-heading">
                             <div class="novels-heading-text">
@@ -818,6 +833,7 @@
                             <select id="ai-config-provider" required>
                                 <option value="openai">OpenAI</option>
                                 <option value="openai-compatible">OpenAI 兼容 API (阿里/月之暗面/智谱等)</option>
+                                <option value="new-api">New API (Gateway)</option>
                                 <option value="claude">Claude (Anthropic)</option>
                                 <option value="gemini">Google Gemini</option>
                                 <option value="gemini-native">Google Gemini（原生）</option>

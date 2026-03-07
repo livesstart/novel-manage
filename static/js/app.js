@@ -9,6 +9,9 @@ const state = {
     tags: [],
     currentView: 'novels',
     selectedTags: new Set(),
+    expandedNovelTagIds: new Set(),
+    filterTagQuery: '',
+    filterTagsExpanded: false,
     editingNovel: null,
     editingCategory: null,
     editingTag: null,
@@ -19,6 +22,9 @@ const state = {
     selectedNovels: new Set(),
     batchActionMode: 'tags'
 };
+
+const NOVEL_TAG_VISIBLE_COUNT = 4;
+const FILTER_TAG_COLLAPSED_LIMIT = 12;
 
 const batchAIState = {
     queue: [],
@@ -96,15 +102,18 @@ async function loadNovels(filters = {}) {
         if (filters.keyword) params.append('keyword', filters.keyword);
         if (filters.category_id) params.append('category_id', filters.category_id);
         if (filters.status !== undefined && filters.status !== '') params.append('status', filters.status);
+        if (filters.untagged_only) params.append('untagged_only', '1');
 
-        // 添加标签筛选参数
-        if (filters.tag_ids && filters.tag_ids.length > 0) {
+        // ????????
+        if (!filters.untagged_only && filters.tag_ids && filters.tag_ids.length > 0) {
             filters.tag_ids.forEach(tagId => params.append('tag_ids', tagId));
         }
 
         const res = await api.get(`/api/novels?${params}`);
         if (res.success) {
             state.novels = res.data;
+            const currentNovelIds = new Set(res.data.map(novel => novel.id));
+            state.expandedNovelTagIds = new Set([...state.expandedNovelTagIds].filter(id => currentNovelIds.has(id)));
             renderNovels();
         }
     } catch (err) {
@@ -142,6 +151,45 @@ async function loadTags() {
 }
 
 // 渲染小说列表
+function renderNovelTags(novel) {
+    const tags = Array.isArray(novel.tags) ? novel.tags : [];
+    if (!tags.length) {
+        return '';
+    }
+
+    const isExpanded = state.expandedNovelTagIds.has(novel.id);
+    const visibleTags = isExpanded ? tags : tags.slice(0, NOVEL_TAG_VISIBLE_COUNT);
+    const hiddenCount = Math.max(tags.length - visibleTags.length, 0);
+    const hasOverflow = tags.length > NOVEL_TAG_VISIBLE_COUNT;
+    const allTagNames = tags.map(tag => tag.name).filter(Boolean).join(', ');
+
+    return `
+        <div class="novel-tags ${isExpanded ? 'expanded' : 'collapsed'}" title="${escapeHtml(allTagNames)}">
+            ${visibleTags.map(tag => `
+                <span class="novel-tag" style="background-color: ${tag.color}20; color: ${tag.color}" title="${escapeHtml(tag.name)}">
+                    ${escapeHtml(tag.name)}
+                </span>
+            `).join('')}
+            ${!isExpanded && hiddenCount > 0 ? `
+                <button type="button" class="novel-tag-toggle" onclick="toggleNovelTagList(${novel.id})">+${hiddenCount}</button>
+            ` : ''}
+            ${isExpanded && hasOverflow ? `
+                <button type="button" class="novel-tag-toggle is-collapse" onclick="toggleNovelTagList(${novel.id})">&#x6536;&#x8d77;</button>
+            ` : ''}
+        </div>
+    `;
+}
+
+function toggleNovelTagList(novelId) {
+    if (state.expandedNovelTagIds.has(novelId)) {
+        state.expandedNovelTagIds.delete(novelId);
+    } else {
+        state.expandedNovelTagIds.add(novelId);
+    }
+
+    renderNovels();
+}
+
 function renderNovels() {
     const container = document.getElementById('novels-grid');
 
@@ -179,15 +227,7 @@ function renderNovels() {
             </div>
             ${novel.category_name ? `<span class="novel-category">${escapeHtml(novel.category_name)}</span>` : ''}
             ${novel.description ? `<div class="novel-description">${escapeHtml(novel.description)}</div>` : ''}
-            ${novel.tags && novel.tags.length > 0 ? `
-                <div class="novel-tags">
-                    ${novel.tags.map(tag => `
-                        <span class="novel-tag" style="background-color: ${tag.color}20; color: ${tag.color}">
-                            ${escapeHtml(tag.name)}
-                        </span>
-                    `).join('')}
-                </div>
-            ` : ''}
+            ${renderNovelTags(novel)}
             <div class="novel-actions">
                 <button class="btn btn-sm btn-secondary" onclick="openNovelFile(${novel.id})">
                     <i class="fas fa-book-open"></i> 阅读
@@ -293,18 +333,83 @@ function updateCategorySelects() {
 
 // 更新标签选择器
 function updateTagSelectors() {
-    // 更新筛选标签
     const filterContainer = document.getElementById('filter-tags');
-    filterContainer.innerHTML = state.tags.map(tag => `
-        <span class="filter-tag ${state.selectedTags.has(tag.id) ? 'active' : ''}"
-              data-id="${tag.id}"
-              style="background-color: ${tag.color}20; color: ${tag.color}"
-              onclick="toggleFilterTag(${tag.id})">
-            ${escapeHtml(tag.name)}
-        </span>
-    `).join('');
+    const searchInput = document.getElementById('filter-tag-search');
+    const summaryEl = document.getElementById('filter-tags-summary');
+    const toggleBtn = document.getElementById('filter-tags-toggle');
+    const clearBtn = document.getElementById('filter-tags-clear');
+    const untaggedOnly = document.getElementById('filter-untagged-only')?.checked;
+    const query = (state.filterTagQuery || '').trim().toLowerCase();
+    const selectedCount = state.selectedTags.size;
 
-    // 更新小说编辑标签选择器
+    if (searchInput) {
+        searchInput.value = state.filterTagQuery;
+        searchInput.disabled = Boolean(untaggedOnly);
+    }
+
+    filterContainer.classList.toggle('disabled', Boolean(untaggedOnly));
+    filterContainer.classList.remove('is-collapsed', 'is-searching');
+
+    if (untaggedOnly) {
+        filterContainer.innerHTML = '<span class="filter-tags-empty">\u5df2\u542f\u7528\u201c\u4ec5\u770b\u65e0\u6807\u7b7e\u201d\uff0c\u6807\u7b7e\u7b5b\u9009\u6682\u65f6\u505c\u7528</span>';
+        if (summaryEl) {
+            summaryEl.textContent = `\u5df2\u9009 ${selectedCount} \u4e2a\u6807\u7b7e`;
+        }
+        if (toggleBtn) {
+            toggleBtn.hidden = true;
+            clearBtn.hidden = true;
+        }
+    } else {
+        const matchedTags = state.tags.filter(tag => !query || String(tag.name || '').toLowerCase().includes(query));
+        const orderedTags = [
+            ...matchedTags.filter(tag => state.selectedTags.has(tag.id)),
+            ...matchedTags.filter(tag => !state.selectedTags.has(tag.id))
+        ];
+        const shouldCollapse = !query && !state.filterTagsExpanded && orderedTags.length > FILTER_TAG_COLLAPSED_LIMIT;
+        const visibleTags = shouldCollapse ? orderedTags.slice(0, FILTER_TAG_COLLAPSED_LIMIT) : orderedTags;
+        const hiddenCount = Math.max(orderedTags.length - visibleTags.length, 0);
+
+        filterContainer.classList.toggle('is-collapsed', shouldCollapse);
+        filterContainer.classList.toggle('is-searching', Boolean(query));
+
+        if (visibleTags.length === 0) {
+            filterContainer.innerHTML = `<span class="filter-tags-empty">${query ? '\u6ca1\u6709\u5339\u914d\u7684\u6807\u7b7e' : '\u6682\u65e0\u6807\u7b7e'}</span>`;
+        } else {
+            filterContainer.innerHTML = visibleTags.map(tag => `
+                <span class="filter-tag ${state.selectedTags.has(tag.id) ? 'active' : ''}"
+                      data-id="${tag.id}"
+                      style="background-color: ${tag.color}20; color: ${tag.color}"
+                      onclick="toggleFilterTag(${tag.id})"
+                      title="${escapeHtml(tag.name)}">
+                    ${escapeHtml(tag.name)}
+                </span>
+            `).join('');
+        }
+
+        if (summaryEl) {
+            summaryEl.textContent = query
+                ? `\u5339\u914d ${matchedTags.length} \u4e2a\u6807\u7b7e\uff0c\u5df2\u9009 ${selectedCount} \u4e2a`
+                : `\u5171 ${state.tags.length} \u4e2a\u6807\u7b7e\uff0c\u5df2\u9009 ${selectedCount} \u4e2a`;
+        }
+
+        if (clearBtn) {
+            clearBtn.hidden = selectedCount === 0;
+        }
+
+        if (toggleBtn) {
+            if (query) {
+                toggleBtn.hidden = false;
+                toggleBtn.textContent = '\u6e05\u7a7a\u641c\u7d22';
+            } else if (orderedTags.length > FILTER_TAG_COLLAPSED_LIMIT || state.filterTagsExpanded) {
+                toggleBtn.hidden = false;
+                toggleBtn.textContent = shouldCollapse ? `\u5c55\u5f00\u66f4\u591a\uff08+${hiddenCount}\uff09` : '\u6536\u8d77\u6807\u7b7e';
+            } else {
+                toggleBtn.hidden = true;
+            }
+        }
+    }
+
+    // ???????????
     const selectorContainer = document.getElementById('novel-tag-selector');
     selectorContainer.innerHTML = state.tags.map(tag => `
         <span class="tag-option"
@@ -321,8 +426,35 @@ function updateTagSelectors() {
     }
 }
 
-// 切换筛选标签
+function toggleFilterTagsPanel() {
+    if (document.getElementById('filter-untagged-only')?.checked) {
+        return;
+    }
+
+    if (state.filterTagQuery) {
+        state.filterTagQuery = '';
+    } else {
+        state.filterTagsExpanded = !state.filterTagsExpanded;
+    }
+
+    updateTagSelectors();
+}
+
+function clearSelectedFilterTags() {
+    if (state.selectedTags.size === 0) {
+        return;
+    }
+
+    state.selectedTags.clear();
+    updateTagSelectors();
+    applyFilters();
+}
+
 function toggleFilterTag(tagId) {
+    if (document.getElementById('filter-untagged-only')?.checked) {
+        return;
+    }
+
     if (state.selectedTags.has(tagId)) {
         state.selectedTags.delete(tagId);
     } else {
@@ -466,12 +598,14 @@ function applyFilters() {
     const keyword = document.getElementById('search-input').value;
     const categoryId = document.getElementById('filter-category').value;
     const status = document.getElementById('filter-status').value;
+    const untaggedOnly = document.getElementById('filter-untagged-only').checked;
 
     loadNovels({
         keyword,
         category_id: categoryId,
         status: status,
-        tag_ids: Array.from(state.selectedTags)
+        tag_ids: untaggedOnly ? [] : Array.from(state.selectedTags),
+        untagged_only: untaggedOnly
     });
 }
 
@@ -1333,6 +1467,11 @@ const providerModels = {
         defaultModel: 'qwen-turbo',
         models: ['qwen-turbo', 'qwen-plus', 'deepseek-chat', 'moonshot-v1-8k', 'gemini-2.5-flash', 'gemini-3-pro-preview']
     },
+    'new-api': {
+        hint: 'New API gateway: API Base usually uses http(s)://your-new-api-host/v1; common models: gpt-4o, gpt-4o-mini, deepseek-chat, gemini-2.5-flash',
+        defaultModel: 'gpt-4o-mini',
+        models: ['gpt-4o', 'gpt-4o-mini', 'deepseek-chat', 'gemini-2.5-flash', 'claude-3-5-sonnet']
+    },
     claude: {
         hint: '常用模型：claude-3-opus-20240229, claude-3-sonnet-20240229, claude-3-haiku-20240307',
         defaultModel: 'claude-3-haiku-20240307',
@@ -1523,6 +1662,7 @@ function getProviderIcon(provider) {
     const icons = {
         openai: 'brain',
         'openai-compatible': 'plug',
+        'new-api': 'network-wired',
         claude: 'feather-alt',
         gemini: 'sparkles',
         'gemini-native': 'shield-halved',
@@ -2450,6 +2590,27 @@ function bindEvents() {
     // 筛选器
     document.getElementById('filter-category').addEventListener('change', applyFilters);
     document.getElementById('filter-status').addEventListener('change', applyFilters);
+    document.getElementById('filter-tag-search').addEventListener('input', (e) => {
+        state.filterTagQuery = e.target.value;
+        updateTagSelectors();
+    });
+    document.getElementById('filter-tag-search').addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') {
+            state.filterTagQuery = '';
+            e.target.value = '';
+            updateTagSelectors();
+        }
+    });
+    document.getElementById('filter-tags-toggle').addEventListener('click', toggleFilterTagsPanel);
+    document.getElementById('filter-tags-clear').addEventListener('click', clearSelectedFilterTags);
+    document.getElementById('filter-untagged-only').addEventListener('change', () => {
+        if (document.getElementById('filter-untagged-only').checked) {
+            state.filterTagQuery = '';
+            state.filterTagsExpanded = false;
+        }
+        updateTagSelectors();
+        applyFilters();
+    });
 
     // 添加小说按钮
     document.getElementById('btn-add-novel').addEventListener('click', () => {
