@@ -1,4 +1,4 @@
-"""File storage helpers for local novel files and batch imports."""
+"""本地小说文件存储和批量导入工具。"""
 import json
 import os
 import re
@@ -13,14 +13,14 @@ TEXT_READABLE_EXTENSIONS = {'.txt'}
 
 
 def sanitize_storage_name(name):
-    """???????????????????"""
+    """清理可安全写入本地文件系统的名称"""
     cleaned = re.sub(r'[<>:"/\\|?*\x00-\x1f]', '_', (name or '').strip())
     cleaned = cleaned.strip(' .')
     return cleaned or 'untitled'
 
 
 def sanitize_relative_storage_path(relative_path, fallback_name='untitled.txt'):
-    """????????????????"""
+    """清理相对存储路径并过滤危险路径片段"""
     normalized = (relative_path or fallback_name).replace('\\', '/')
     raw_parts = Path(normalized).parts
     safe_parts = []
@@ -41,7 +41,7 @@ def is_supported_novel_file(file_name):
 
 
 def store_uploaded_file(file_storage, relative_path=None, namespace='manual', reuse_existing=False):
-    """????????????????????"""
+    """保存上传文件并返回库目录中的相对路径"""
     original_name = Path(file_storage.filename or 'untitled.txt').name
     target_rel = Path(namespace) / sanitize_relative_storage_path(relative_path, original_name)
     target_abs = UPLOAD_ROOT / target_rel
@@ -63,7 +63,7 @@ def store_uploaded_file(file_storage, relative_path=None, namespace='manual', re
 
 
 def resolve_novel_file_path(file_path):
-    """????????????"""
+    """解析数据库中的小说文件路径"""
     if not file_path:
         return None, []
 
@@ -190,11 +190,11 @@ def _build_file_delete_error_message(failed_items):
     preview = []
     for item in failed_items[:3]:
         preview.append(f"{item['file_path']}: {item['error']}")
-    return '?????????' + '?'.join(preview)
+    return '文件删除失败：' + '；'.join(preview)
 
 
 def parse_import_request():
-    """??????????? JSON ? multipart/form-data"""
+    """解析导入请求，支持 JSON 与 multipart/form-data"""
     if request.files:
         try:
             novels = json.loads(request.form.get('novels', '[]'))

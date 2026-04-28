@@ -1,5 +1,8 @@
 import os
 import sys
+import ast
+import io
+import tokenize
 import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
@@ -75,6 +78,40 @@ class AppStructureTest(unittest.TestCase):
             line_count = sum(1 for _ in handle)
 
         self.assertLessEqual(line_count, 1500)
+
+    def test_python_comments_and_docstrings_are_readable(self):
+        project_root = os.path.dirname(os.path.dirname(__file__))
+        python_files = [
+            'app.py',
+            'ai_routes.py',
+            'crawler_routes.py',
+            'reader_utils.py',
+            'storage_utils.py',
+        ]
+        unreadable_items = []
+
+        for relative_path in python_files:
+            path = os.path.join(project_root, relative_path)
+            with open(path, 'r', encoding='utf-8') as handle:
+                source = handle.read()
+
+            for token in tokenize.generate_tokens(io.StringIO(source).readline):
+                if token.type == tokenize.COMMENT and '???' in token.string:
+                    unreadable_items.append(f'{relative_path}:{token.start[0]} comment')
+
+            tree = ast.parse(source)
+            nodes = [('module', tree)] + [
+                (getattr(node, 'name', '<anonymous>'), node)
+                for node in ast.walk(tree)
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+            ]
+            for name, node in nodes:
+                docstring = ast.get_docstring(node, clean=False)
+                if docstring and '???' in docstring:
+                    line_number = getattr(node, 'lineno', 1)
+                    unreadable_items.append(f'{relative_path}:{line_number} {name} docstring')
+
+        self.assertEqual(unreadable_items, [])
 
 
 if __name__ == '__main__':

@@ -1,5 +1,5 @@
 """
-??????? - Flask??
+本地小说管理器 - Flask 后端
 """
 import os
 import sqlite3
@@ -14,7 +14,7 @@ CORS(app)
 
 DATABASE = 'novels.db'
 def get_db():
-    """???????"""
+    """获取数据库连接"""
     conn = sqlite3.connect(DATABASE)
     conn.row_factory = sqlite3.Row
     conn.execute('PRAGMA foreign_keys = ON')
@@ -22,12 +22,12 @@ def get_db():
 
 
 def init_db():
-    """???????"""
+    """初始化数据库"""
     conn = get_db()
     cursor = conn.cursor()
     UPLOAD_ROOT.mkdir(parents=True, exist_ok=True)
 
-    # ???
+    # 小说表
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS novels (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -37,14 +37,14 @@ def init_db():
             file_path TEXT,
             category_id INTEGER,
             cover_path TEXT,
-            status INTEGER DEFAULT 0,  -- 0:?? 1:??? 2:???
+            status INTEGER DEFAULT 0,  -- 0:未读 1:阅读中 2:已读
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (category_id) REFERENCES categories(id)
         )
     ''')
 
-    # ???
+    # 分类表
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS categories (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -54,7 +54,7 @@ def init_db():
         )
     ''')
 
-    # ???
+    # 标签表
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS tags (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -64,7 +64,7 @@ def init_db():
         )
     ''')
 
-    # ??-?????
+    # 小说-标签关联表
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS novel_tags (
             novel_id INTEGER,
@@ -565,14 +565,14 @@ def update_novel(novel_id):
 
 @app.route('/api/novels/<int:novel_id>', methods=['DELETE'])
 def delete_novel(novel_id):
-    """????"""
+    """删除小说"""
     conn = get_db()
     cursor = conn.cursor()
 
     try:
         rows, deletion_targets, shared_paths = _collect_novel_file_deletion_targets(cursor, [novel_id])
         if not rows:
-            return jsonify({'success': False, 'message': '?????'}), 404
+            return jsonify({'success': False, 'message': '小说不存在'}), 404
 
         file_delete_result = _delete_novel_files(deletion_targets)
         if file_delete_result['failed']:
@@ -906,7 +906,7 @@ def check_novel_file(novel_id):
     })
 
 
-# ==================== AI ?? API ====================
+# ==================== AI 配置 API ====================
 from ai_routes import register_ai_routes
 from crawler_routes import (
     _ensure_crawler_site_rule_schema,
@@ -1194,12 +1194,12 @@ def batch_set_status():
 
 @app.route('/api/novels/batch/delete', methods=['POST'])
 def batch_delete_novels():
-    """??????"""
+    """批量删除小说"""
     data = request.json
     novel_ids = _normalize_novel_ids((data or {}).get('novel_ids', []))
 
     if not novel_ids:
-        return jsonify({'success': False, 'message': '?????'}), 400
+        return jsonify({'success': False, 'message': '请选择小说'}), 400
 
     conn = get_db()
     cursor = conn.cursor()
@@ -1207,7 +1207,7 @@ def batch_delete_novels():
     try:
         rows, deletion_targets, shared_paths = _collect_novel_file_deletion_targets(cursor, novel_ids)
         if not rows:
-            return jsonify({'success': False, 'message': '?????????'}), 404
+            return jsonify({'success': False, 'message': '所选小说不存在'}), 404
 
         file_delete_result = _delete_novel_files(deletion_targets)
         if file_delete_result['failed']:

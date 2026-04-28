@@ -3029,9 +3029,9 @@ def create_crawler_task():
     data = request.get_json(silent=True) or {}
     source_url = (data.get('source_url') or '').strip()
     if not source_url:
-        return jsonify({'success': False, 'message': '???????????'}), 400
+        return jsonify({'success': False, 'message': '请提供抓取链接'}), 400
     if not source_url.startswith(('http://', 'https://')):
-        return jsonify({'success': False, 'message': '????? http:// ? https:// ??'}), 400
+        return jsonify({'success': False, 'message': '链接必须以 http:// 或 https:// 开头'}), 400
 
     try:
         source_url = _validate_crawler_target_url(source_url)
@@ -3052,7 +3052,7 @@ def create_crawler_task():
         try:
             category_id = int(category_id)
         except (TypeError, ValueError):
-            return jsonify({'success': False, 'message': '??????'}), 400
+            return jsonify({'success': False, 'message': '分类无效'}), 400
 
     site_rule_id = data.get('site_rule_id')
     if site_rule_id in ('', None):
@@ -3061,9 +3061,9 @@ def create_crawler_task():
         try:
             site_rule_id = int(site_rule_id)
         except (TypeError, ValueError):
-            return jsonify({'success': False, 'message': '????????'}), 400
+            return jsonify({'success': False, 'message': '站点规则无效'}), 400
         if not _fetch_crawler_site_rule(site_rule_id):
-            return jsonify({'success': False, 'message': '???????'}), 400
+            return jsonify({'success': False, 'message': '站点规则不存在'}), 400
 
     batch_from_listing = bool(data.get('batch_from_listing'))
     listing_limit = _sanitize_crawler_listing_limit(data.get('listing_limit'))
@@ -3079,12 +3079,12 @@ def create_crawler_task():
     try:
         if batch_from_listing:
             if not resolved_rule or not str(resolved_rule.get('listing_link_selector') or '').strip():
-                return jsonify({'success': False, 'message': '???????????????????????????'}), 400
+                return jsonify({'success': False, 'message': '当前站点规则不支持从列表批量创建任务'}), 400
 
             response = _request_url(source_url)
             thread_links = _extract_listing_thread_links(response.text, source_url, resolved_rule)
             if not thread_links:
-                return jsonify({'success': False, 'message': '???????????????????????????'}), 400
+                return jsonify({'success': False, 'message': '未能从列表页提取到可抓取链接'}), 400
 
             effective_rule_id = resolved_rule.get('id') if resolved_rule else site_rule_id
             title_prefix = (data.get('title') or '').strip()
@@ -3102,8 +3102,8 @@ def create_crawler_task():
                     continue
 
                 item_title = item.get('title') or _guess_title_from_url(detail_url)
-                task_title = f'{title_prefix} ? {item_title}' if title_prefix else item_title
-                task_name = f'{name_prefix} ? {item_title}' if name_prefix else item_title
+                task_title = f'{title_prefix} - {item_title}' if title_prefix else item_title
+                task_name = f'{name_prefix} - {item_title}' if name_prefix else item_title
                 task_id = _insert_crawler_task_record(
                     cursor,
                     name=task_name,
@@ -3126,7 +3126,7 @@ def create_crawler_task():
 
             return jsonify({
                 'success': True,
-                'message': f'??????? {len(created_task_ids)} ?????? {skipped_count} ??????',
+                'message': f'已创建 {len(created_task_ids)} 个任务，跳过 {skipped_count} 个重复任务',
                 'data': {
                     'mode': 'batch_listing',
                     'found_count': len(thread_links),
