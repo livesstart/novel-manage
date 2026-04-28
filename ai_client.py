@@ -19,6 +19,39 @@ COMMON_EXCLUDED_MODEL_KEYWORDS = (
 )
 
 
+def _coerce_bool(value: Any) -> bool:
+    """Convert stored/form values to a real boolean."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    if isinstance(value, str):
+        return value.strip().lower() in ('1', 'true', 'yes', 'on')
+    return False
+
+
+def _normalize_proxy_url(value: Any) -> str:
+    if value is None:
+        return ''
+    return str(value).strip()
+
+
+def _build_requests_proxy_kwargs(config: Dict[str, Any]) -> Dict[str, Any]:
+    proxy_url = _normalize_proxy_url(config.get('proxy_url'))
+    if not _coerce_bool(config.get('use_proxy')) or not proxy_url:
+        return {}
+    return {'proxies': {'http': proxy_url, 'https': proxy_url}}
+
+
+def _build_httpx_client(proxy_url: str):
+    import httpx
+
+    try:
+        return httpx.Client(proxy=proxy_url)
+    except TypeError:
+        return httpx.Client(proxies=proxy_url)
+
+
 def _normalize_model_list(models: List[str], *, provider: str = '') -> List[str]:
     """清洗并去重模型列表。"""
     normalized = []
@@ -152,7 +185,8 @@ def _discover_openai_models(config: Dict[str, Any]) -> List[str]:
     response = requests.get(
         f'{api_base}models',
         headers={'Authorization': f"Bearer {config.get('api_key', '')}"},
-        timeout=(10, 30)
+        timeout=(10, 30),
+        **_build_requests_proxy_kwargs(config)
     )
     response.raise_for_status()
     return _normalize_model_list(_extract_openai_style_models(response.json()), provider='openai')
@@ -165,7 +199,8 @@ def _discover_openai_compatible_models(config: Dict[str, Any]) -> List[str]:
     response = requests.get(
         f'{api_base}models',
         headers={'Authorization': f"Bearer {config.get('api_key', '')}"},
-        timeout=(10, 30)
+        timeout=(10, 30),
+        **_build_requests_proxy_kwargs(config)
     )
     response.raise_for_status()
     return _normalize_model_list(_extract_openai_style_models(response.json()), provider='openai-compatible')
@@ -180,7 +215,8 @@ def _discover_gemini_models(config: Dict[str, Any]) -> List[str]:
         response = requests.get(
             f'{api_base}models',
             headers={'Authorization': f"Bearer {config.get('api_key', '')}"},
-            timeout=(10, 30)
+            timeout=(10, 30),
+            **_build_requests_proxy_kwargs(config)
         )
         response.raise_for_status()
         models = _normalize_model_list(_extract_openai_style_models(response.json()), provider='gemini')
@@ -192,7 +228,8 @@ def _discover_gemini_models(config: Dict[str, Any]) -> List[str]:
     response = requests.get(
         'https://generativelanguage.googleapis.com/v1beta/models',
         params={'key': config.get('api_key', '')},
-        timeout=(10, 30)
+        timeout=(10, 30),
+        **_build_requests_proxy_kwargs(config)
     )
     response.raise_for_status()
 
@@ -384,7 +421,8 @@ def _discover_claude_models(config: Dict[str, Any]) -> List[str]:
             'x-api-key': config.get('api_key', ''),
             'anthropic-version': '2023-06-01'
         },
-        timeout=(10, 30)
+        timeout=(10, 30),
+        **_build_requests_proxy_kwargs(config)
     )
     response.raise_for_status()
 
@@ -400,7 +438,7 @@ def _discover_ollama_models(config: Dict[str, Any]) -> List[str]:
     import requests
 
     api_base = (config.get('api_base') or 'http://localhost:11434').rstrip('/')
-    response = requests.get(f'{api_base}/api/tags', timeout=(5, 15))
+    response = requests.get(f'{api_base}/api/tags', timeout=(5, 15), **_build_requests_proxy_kwargs(config))
     response.raise_for_status()
 
     models = []
@@ -438,11 +476,16 @@ class AIConfig:
                 model TEXT DEFAULT 'gpt-3.5-turbo',
                 temperature REAL DEFAULT 0.7,
                 max_tokens INTEGER DEFAULT 2000,
+                use_proxy INTEGER DEFAULT 0,
+                proxy_url TEXT,
                 is_active INTEGER DEFAULT 0,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         ''')
+
+        AIConfig._ensure_column(cursor, 'use_proxy', 'INTEGER DEFAULT 0')
+        AIConfig._ensure_column(cursor, 'proxy_url', 'TEXT')
 
         # 插入默认配置
         cursor.execute('''
@@ -452,6 +495,20 @@ class AIConfig:
 
         conn.commit()
         conn.close()
+
+    @staticmethod
+    def _ensure_column(cursor, column_name: str, definition: str):
+        cursor.execute('PRAGMA table_info(ai_configs)')
+        columns = {row[1] for row in cursor.fetchall()}
+        if column_name not in columns:
+            cursor.execute(f'ALTER TABLE ai_configs ADD COLUMN {column_name} {definition}')
+
+    @staticmethod
+    def _proxy_fields(config_data: Dict[str, Any], existing_config: Optional[Dict[str, Any]] = None) -> tuple:
+        existing_config = existing_config or {}
+        use_proxy_value = config_data.get('use_proxy', existing_config.get('use_proxy', 0))
+        proxy_url_value = config_data.get('proxy_url', existing_config.get('proxy_url', ''))
+        return int(_coerce_bool(use_proxy_value)), _normalize_proxy_url(proxy_url_value)
 
     @staticmethod
     def get_active_config() -> Optional[Dict[str, Any]]:
@@ -508,6 +565,7 @@ class AIConfig:
             api_key = config_data.get('api_key')
             if api_key is None or (isinstance(api_key, str) and (not api_key.strip() or api_key.startswith('***'))):
                 api_key = existing_config.get('api_key')
+            use_proxy, proxy_url = AIConfig._proxy_fields(config_data, existing_config)
 
             # ??????
             cursor.execute('''
@@ -519,6 +577,8 @@ class AIConfig:
                     model = ?,
                     temperature = ?,
                     max_tokens = ?,
+                    use_proxy = ?,
+                    proxy_url = ?,
                     updated_at = CURRENT_TIMESTAMP
                 WHERE id = ?
             ''', (
@@ -529,14 +589,17 @@ class AIConfig:
                 config_data.get('model', 'gpt-3.5-turbo'),
                 config_data.get('temperature', 0.7),
                 config_data.get('max_tokens', 2000),
+                use_proxy,
+                proxy_url,
                 config_id
             ))
         else:
+            use_proxy, proxy_url = AIConfig._proxy_fields(config_data)
             # ?????
             cursor.execute('''
                 INSERT INTO ai_configs
-                (name, provider, api_key, api_base, model, temperature, max_tokens)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                (name, provider, api_key, api_base, model, temperature, max_tokens, use_proxy, proxy_url)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (
                 config_data.get('name'),
                 config_data.get('provider', 'openai'),
@@ -544,7 +607,9 @@ class AIConfig:
                 config_data.get('api_base'),
                 config_data.get('model', 'gpt-3.5-turbo'),
                 config_data.get('temperature', 0.7),
-                config_data.get('max_tokens', 2000)
+                config_data.get('max_tokens', 2000),
+                use_proxy,
+                proxy_url
             ))
             config_id = cursor.lastrowid
 
@@ -595,6 +660,16 @@ class BaseAIClient(ABC):
         self.model = config.get('model', 'gpt-3.5-turbo')
         self.temperature = config.get('temperature', 0.7)
         self.max_tokens = config.get('max_tokens', 2000)
+        self.use_proxy = _coerce_bool(config.get('use_proxy'))
+        self.proxy_url = _normalize_proxy_url(config.get('proxy_url'))
+
+    def _request_kwargs(self) -> Dict[str, Any]:
+        return _build_requests_proxy_kwargs(self.config)
+
+    def _http_client(self):
+        if not self.use_proxy or not self.proxy_url:
+            return None
+        return _build_httpx_client(self.proxy_url)
 
     @abstractmethod
     def chat(self, messages: List[Dict[str, str]], stream: bool = False) -> Any:
@@ -626,6 +701,10 @@ class OpenAIClient(BaseAIClient):
 
             if self.api_base:
                 client_kwargs['base_url'] = self.api_base
+
+            http_client = self._http_client()
+            if http_client:
+                client_kwargs['http_client'] = http_client
 
             self.client = OpenAI(**client_kwargs)
         except ImportError:
@@ -681,6 +760,10 @@ class ClaudeClient(BaseAIClient):
 
             if self.api_base:
                 client_kwargs['base_url'] = self.api_base
+
+            http_client = self._http_client()
+            if http_client:
+                client_kwargs['http_client'] = http_client
 
             self.client = anthropic.Anthropic(**client_kwargs)
         except ImportError:
@@ -756,10 +839,10 @@ class OllamaClient(BaseAIClient):
         }
 
         if stream:
-            response = requests.post(url, json=data, stream=True)
+            response = requests.post(url, json=data, stream=True, **self._request_kwargs())
             return response.iter_lines()
         else:
-            response = requests.post(url, json=data)
+            response = requests.post(url, json=data, **self._request_kwargs())
             response.raise_for_status()
             result = response.json()
             return result.get('message', {}).get('content', '')
@@ -768,7 +851,7 @@ class OllamaClient(BaseAIClient):
         """测试连接"""
         try:
             import requests
-            response = requests.get(f"{self.api_base}/api/tags", timeout=5)
+            response = requests.get(f"{self.api_base}/api/tags", timeout=5, **self._request_kwargs())
             if response.status_code == 200:
                 return True, "连接成功"
             return False, f"状态码: {response.status_code}"
@@ -800,7 +883,14 @@ class GeminiClient(BaseAIClient):
             'Authorization': f'Bearer {self.api_key}',
             'Content-Type': 'application/json',
         }
-        response = requests.post(url, headers=headers, json=payload, stream=stream, timeout=(10, 60))
+        response = requests.post(
+            url,
+            headers=headers,
+            json=payload,
+            stream=stream,
+            timeout=(10, 60),
+            **self._request_kwargs()
+        )
         response.raise_for_status()
         return response
 
@@ -888,7 +978,14 @@ class OpenAICompatibleClient(BaseAIClient):
             'Authorization': f'Bearer {self.api_key}',
             'Content-Type': 'application/json',
         }
-        response = requests.post(url, headers=headers, json=payload, stream=stream, timeout=(10, 60))
+        response = requests.post(
+            url,
+            headers=headers,
+            json=payload,
+            stream=stream,
+            timeout=(10, 60),
+            **self._request_kwargs()
+        )
         response.raise_for_status()
         return response
 
@@ -987,7 +1084,8 @@ class GeminiNativeClient(BaseAIClient):
             params={'key': self.api_key},
             headers={'Content-Type': 'application/json'},
             json=payload,
-            timeout=(10, 60)
+            timeout=(10, 60),
+            **self._request_kwargs()
         )
         response.raise_for_status()
         return response

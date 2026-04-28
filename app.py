@@ -1653,7 +1653,7 @@ def build_ai_test_config(data):
 
     config = dict(existing_config or {})
 
-    for field in ('name', 'provider', 'api_base', 'model'):
+    for field in ('name', 'provider', 'api_base', 'model', 'proxy_url'):
         value = payload.get(field)
         if value is not None:
             config[field] = value
@@ -1662,6 +1662,9 @@ def build_ai_test_config(data):
         value = payload.get(field)
         if value is not None and value != '':
             config[field] = value
+
+    if 'use_proxy' in payload:
+        config['use_proxy'] = payload.get('use_proxy')
 
     api_key = payload.get('api_key')
     if isinstance(api_key, str):

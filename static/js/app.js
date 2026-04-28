@@ -1790,6 +1790,23 @@ function renderDiscoveredModels(models = [], preferredModel = '') {
     }
 }
 
+function isAIProxyEnabled(value) {
+    if (typeof value === 'boolean') return value;
+    if (typeof value === 'number') return value !== 0;
+    if (typeof value === 'string') return ['1', 'true', 'yes', 'on'].includes(value.trim().toLowerCase());
+    return false;
+}
+
+function updateAIProxyFields() {
+    const toggle = document.getElementById('ai-config-use-proxy');
+    const proxyUrlInput = document.getElementById('ai-config-proxy-url');
+    const proxyUrlField = proxyUrlInput?.closest('.ai-proxy-url-field');
+    if (!toggle || !proxyUrlInput) return;
+
+    proxyUrlInput.disabled = !toggle.checked;
+    proxyUrlField?.classList.toggle('is-disabled', !toggle.checked);
+}
+
 function collectAIConfigFormData() {
     const id = document.getElementById('ai-config-id').value.trim();
     const apiKey = document.getElementById('ai-config-api-key').value.trim();
@@ -1798,6 +1815,8 @@ function collectAIConfigFormData() {
         provider: document.getElementById('ai-config-provider').value,
         model: document.getElementById('ai-config-model').value.trim(),
         api_base: document.getElementById('ai-config-api-base').value.trim(),
+        use_proxy: document.getElementById('ai-config-use-proxy').checked,
+        proxy_url: document.getElementById('ai-config-proxy-url').value.trim(),
         temperature: parseFloat(document.getElementById('ai-config-temperature').value),
         max_tokens: parseInt(document.getElementById('ai-config-max-tokens').value, 10)
     };
@@ -1862,6 +1881,7 @@ function renderAIConfigs() {
         const isActive = config.id === aiConfigState.activeConfigId;
         const provider = aiConfigState.providers.find(p => p.id === config.provider);
         const providerName = provider ? provider.name : config.provider;
+        const proxyEnabled = isAIProxyEnabled(config.use_proxy);
 
         return `
             <div class="ai-config-card ${isActive ? 'active' : ''}">
@@ -1874,6 +1894,7 @@ function renderAIConfigs() {
                         <div class="ai-config-meta">
                             <span>${escapeHtml(providerName)}</span>
                             <span class="ai-config-model">${escapeHtml(config.model)}</span>
+                            ${proxyEnabled ? '<span class="ai-config-proxy active"><i class="fas fa-route"></i> 代理</span>' : ''}
                             ${isActive ? '<span class="ai-config-status active"><i class="fas fa-check-circle"></i> 当前激活</span>' : ''}
                         </div>
                     </div>
@@ -1890,7 +1911,7 @@ function renderAIConfigs() {
                     <button class="btn btn-sm btn-primary" onclick="editAIConfig(${config.id})">
                         <i class="fas fa-edit"></i> 编辑
                     </button>
-                    <button class="btn btn-sm btn-danger" onclick="deleteAIConfig(${config.id})">
+                    <button class="btn btn-sm btn-danger btn-icon-only" onclick="deleteAIConfig(${config.id})" title="删除配置" aria-label="删除配置">
                         <i class="fas fa-trash"></i>
                     </button>
                 </div>
@@ -1921,6 +1942,8 @@ function resetAIConfigModal() {
     document.getElementById('ai-config-api-key').value = '';
     document.getElementById('ai-config-api-key').placeholder = 'sk-...';
     document.getElementById('ai-config-api-base').value = '';
+    document.getElementById('ai-config-use-proxy').checked = false;
+    document.getElementById('ai-config-proxy-url').value = '';
     document.getElementById('ai-config-temperature').value = '0.7';
     document.getElementById('ai-config-max-tokens').value = '2000';
     document.getElementById('ai-config-modal-title').textContent = '添加 AI 配置';
@@ -1928,6 +1951,7 @@ function resetAIConfigModal() {
     renderDiscoveredModels(getProviderPresetModels('openai'));
     setAIModelDiscoveryStatus('支持手动填写模型，也支持测试连接后自动拉取模型列表');
     updateProviderHint('openai');
+    updateAIProxyFields();
 }
 
 function updateProviderHint(provider) {
@@ -1967,6 +1991,10 @@ async function saveAIConfig() {
         showToast('请输入 API Key', 'error');
         return;
     }
+    if (configData.use_proxy && !configData.proxy_url) {
+        showToast('启用代理时请输入代理地址', 'error');
+        return;
+    }
 
     try {
         let res;
@@ -2001,11 +2029,14 @@ async function editAIConfig(id) {
     document.getElementById('ai-config-api-key').value = '';
     document.getElementById('ai-config-api-key').placeholder = config.api_key ? '已保存，留空则保持不变' : 'sk-...';
     document.getElementById('ai-config-api-base').value = config.api_base || '';
+    document.getElementById('ai-config-use-proxy').checked = isAIProxyEnabled(config.use_proxy);
+    document.getElementById('ai-config-proxy-url').value = config.proxy_url || '';
     document.getElementById('ai-config-temperature').value = config.temperature;
     document.getElementById('ai-config-max-tokens').value = config.max_tokens;
     document.getElementById('ai-config-modal-title').textContent = '编辑 AI 配置';
 
     updateProviderHint(config.provider);
+    updateAIProxyFields();
     renderDiscoveredModels(getProviderPresetModels(config.provider), config.model);
     setAIModelDiscoveryStatus('当前可先从推荐模型中选，点击“测试连接”可刷新为接口返回的模型');
     openModal('ai-config-modal');
@@ -2074,6 +2105,10 @@ async function testCurrentAIConfig() {
     }
     if (!configData.id && requiresApiKey && !configData.api_key) {
         showToast('请输入 API Key', 'error');
+        return;
+    }
+    if (configData.use_proxy && !configData.proxy_url) {
+        showToast('启用代理时请输入代理地址', 'error');
         return;
     }
 
@@ -3141,6 +3176,8 @@ function bindEvents() {
     document.getElementById('ai-config-provider').addEventListener('change', (e) => {
         updateProviderHint(e.target.value);
     });
+
+    document.getElementById('ai-config-use-proxy').addEventListener('change', updateAIProxyFields);
 
     // AI 聊天测试
     document.getElementById('btn-ai-send').addEventListener('click', sendChatMessage);

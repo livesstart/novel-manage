@@ -278,12 +278,12 @@
                                     <p>配置 AI 接口后，可在小说阅读时使用 AI 辅助功能，如智能摘要、情节分析、角色关系梳理等。</p>
                                 </div>
                             </div>
-                            <div class="info-card warning" id="gemini-proxy-hint" style="display: none; margin-top: 12px;">
+                            <div class="info-card warning" id="gemini-proxy-hint" style="display: none;">
                                 <i class="fas fa-exclamation-triangle"></i>
                                 <div class="info-text">
                                     <h4>代理设置提示</h4>
                                     <p>Google Gemini 需要代理才能访问。如需使用 Gemini，请先设置 HTTPS_PROXY 环境变量，然后重启服务。</p>
-                                    <code style="display: block; margin-top: 8px; padding: 8px; background: rgba(0,0,0,0.1); border-radius: 4px;">set HTTPS_PROXY=http://127.0.0.1:7890</code>
+                                    <code class="proxy-command">set HTTPS_PROXY=http://127.0.0.1:7890</code>
                                 </div>
                             </div>
                         </div>
@@ -963,6 +963,17 @@
                         <label>API Base URL</label>
                         <input type="text" id="ai-config-api-base" placeholder="https://api.openai.com/v1">
                         <small class="form-hint">可选，用于自定义 API 地址或第三方兼容服务</small>
+                    </div>
+                    <div class="form-group ai-proxy-settings">
+                        <label class="checkbox-label ai-proxy-toggle">
+                            <input type="checkbox" id="ai-config-use-proxy">
+                            <span>通过代理访问此配置</span>
+                        </label>
+                        <div class="ai-proxy-url-field">
+                            <label>代理地址</label>
+                            <input type="text" id="ai-config-proxy-url" placeholder="http://127.0.0.1:7890">
+                            <small class="form-hint">勾选后仅当前 AI 配置请求使用该代理；未勾选时会保留地址但不启用</small>
+                        </div>
                     </div>
                     <div class="form-row">
                         <div class="form-group">
