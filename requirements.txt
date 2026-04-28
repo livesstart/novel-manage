@@ -6,3 +6,4 @@ anthropic==0.18.1
 google-generativeai==0.3.2
 requests==2.31.0
 beautifulsoup4==4.12.3
+pycryptodome==3.23.0

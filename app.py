@@ -6,6 +6,8 @@ import os
 import sqlite3
 import re
 import html
+import base64
+import hashlib
 import ipaddress
 import socket
 import threading
@@ -38,6 +40,36 @@ CRAWLER_MAX_ALLOWED_ATTEMPTS = 5
 CRAWLER_RESPONSE_SIZE_LIMIT = 5 * 1024 * 1024
 CRAWLER_LISTING_BATCH_MAX = 50
 CRAWLER_ALLOW_PRIVATE_TARGETS = os.getenv('ALLOW_PRIVATE_CRAWLER_TARGETS', '').strip().lower() in {'1', 'true', 'yes', 'on'}
+ALICESW_HOST = 'www.alicesw.com'
+ALICESW_READER_TOKEN_PREFIX = 'B3wlP9Tzo$0RIdlvX&^sg30^0&feAox%'
+ALICESW_READER_TOKEN_SUFFIX = 'Rs4qM7mGrQ6aTMr8HHvv3WikTcY&kW8R'
+ALICESW_READER_PRIVATE_KEY = '''-----BEGIN RSA PRIVATE KEY-----
+MIIEogIBAAKCAQEAnOUiABBEw9zzOqivp4uJxTd3D5Givmwx2i+JLVdyj9iO2S1E
+crWOaO5k6lD4fbL0MnMH+luJhO3ySm1xDZy22ruzvPHhd+Sh3nH56+hOcj1jfpBx
+lDPlwyo2nDshY0VFr/3fonFjepp5PP+eZKYt9YWtxrVMWOc0yNH6HuRA+zwUX28W
+RlP/4vMWi6vEYt0XLt+lTBGqyvwxPYJBYivIehGz4exC7K1bpvX8LJWVARkvEIuf
+Y3sQHtC/BTeYoEsipfZYafTgQHJ+KAOZSq/CET0USeTt+Evfn6YcbWX577DrRyGt
+siJjojMEG5TKdDQWmGKTQb4E2+EpTrQYaCcaowIDAQABAoIBAC8L9noWZshkxPre
+Am43RYTB8Q3WGfsH7psCjhvukQfZZFxzWocbMiz8733j8d+ffeJy4/2K3V3jDDiN
+QM1YJOzKREdwMLAG+xL9EnhPHNbc2azmG2jZdxhi3CVVBdoCt7biZeEMJ0xobdqA
+vDpqKnXpNAbV7qLqEcX2UQ5aW7H6BdCgGk9HRBKXs/ll65NZmxORXLoAVg+w7Vzi
+XaLP6+43KNXUPLz0EPndDH9VkGlMcyu6q7pWLoz6eN0fNiP4Jfl9PbV4KFlye2xo
+4FI+Go8luM0onDL1+bKE5RJHXqfS+ow9hYzBJSz39jyNpiH7j8Hg8mMDPm0VIYtM
+sOF/RgECgYEAzuuziQzrT74ZW27AQqMFQFLvqMmnrhR4CPg0mRq/PMHSzh+Bs+nS
+Gib2d1ulkKIDHPOG9EWKXBOUvHOBmGro+sOS9fnfoJYeNhLmX5K1xcDJpsBOMdZv
+euEit2i7yy+KAc26fP+SoCQEHm1mlgZG1vcfJlPDofqwRyBeKHPAkGMCgYEAwhvb
+Fw3udE0hws92+9GYmjES8jNauBaP3hlu3lmxcnjlVqlkHbc9PkvddmCsSB/5TUCH
+7qJRgYLo+uov40zNNavXv8cTqWvDrJxTuDFn0OSjeIvqS9kXeVHjpBP6d4CCLAZM
+b6owfM8JtBFx9ef9ll5mwBekZDrspEXOgoCQwMECgYBujaILvFpQ7alQn5ibQcxB
+dM5VKQCs0oTbjflUP+UjCg+eT1kWDfxSOrT+SnnoD5eINVjKVAk7br7N/QylqaE2
+sZ1oTIu9mdckXu6064aw1HMo46AjooVHatgIlC2ZvpmGoytbM5VceEG3HA5uY4Yf
+vkLnUGO6vFzIc7O6+zVMLwKBgFmIab0vkt6YOUtXUIWEvwPYQOnwoBaraX7Dcm0j
+KAMqGnanuWMvgxM6ARO6MZ0vCloEuu5qdnfrfzVFUgNhCIKKGgD+fWY3K9FxZfhe
+6Yjj/Tb8Kn0DzJ0MFZk4Ed6PKvvNh/I1qRnYkZw6M7t+X2y9bF2MSiplN4PqIv/0
+90/BAoGAQXzOzA3q+vcA9mwKvwXrPiSscmZMekV6RBUxf1riRzTnds9uWSTKz8QM
+LpEoNB3tKSB+4raK6xJGJ914b+jc/B7ayHDksStOLeJLV6t5+bmoKjk6qBrUjTQX
+y8x2rsHReaJw0SbZy+4x55nYTi/0mdzomR7N27EzYtzM7iWk5w0=
+-----END RSA PRIVATE KEY-----'''
 
 crawler_threads = {}
 crawler_threads_lock = threading.Lock()
@@ -1906,11 +1938,37 @@ def _seed_default_crawler_site_rules(cursor):
             'notes': '适用于 cool18 禁忌书屋 threadview 帖子页；建议直接粘贴帖子详情页链接，不要使用版块首页列表链接。',
             'sort_order': 80,
             'is_active': 1,
+        },
+        {
+            'name': 'AliceSW 小说页',
+            'host_pattern': ALICESW_HOST,
+            'title_selector': '.novel_title',
+            'content_selector': '.j_readContent',
+            'listing_link_selector': '',
+            'related_thread_selector': '',
+            'chapter_link_selector': (
+                '.mulu_list a[href*="/book/"]\n'
+                '.book_newchap a[href*="/other/chapters/id/"]\n'
+                '.book_newchap a[href*="/book/"]'
+            ),
+            'chapter_title_selector': '.j_chapterName',
+            'remove_selectors': 'script\nstyle\n.header\n.footer\n.read-header',
+            'notes': '适用于 alicesw 的小说详情页、目录页与章节页；章节正文需要通过站点接口解密提取。',
+            'sort_order': 90,
+            'is_active': 1,
         }
     ]
 
     for item in defaults:
-        cursor.execute('SELECT id, listing_link_selector, related_thread_selector, chapter_title_selector, title_selector, content_selector FROM crawler_site_rules WHERE host_pattern = ?', (item['host_pattern'],))
+        cursor.execute(
+            '''
+            SELECT id, listing_link_selector, related_thread_selector, chapter_title_selector, title_selector,
+                   content_selector, chapter_link_selector, remove_selectors
+            FROM crawler_site_rules
+            WHERE host_pattern = ?
+            ''',
+            (item['host_pattern'],)
+        )
         existing = cursor.fetchone()
         if existing:
             updates = []
@@ -1930,6 +1988,12 @@ def _seed_default_crawler_site_rules(cursor):
             if not (existing['content_selector'] or '').strip() and item.get('content_selector'):
                 updates.append('content_selector = ?')
                 params.append(item['content_selector'])
+            if not (existing['chapter_link_selector'] or '').strip() and item.get('chapter_link_selector'):
+                updates.append('chapter_link_selector = ?')
+                params.append(item['chapter_link_selector'])
+            if not (existing['remove_selectors'] or '').strip() and item.get('remove_selectors'):
+                updates.append('remove_selectors = ?')
+                params.append(item['remove_selectors'])
             if updates:
                 updates.append('updated_at = ?')
                 params.append(_now_timestamp())
@@ -2572,6 +2636,214 @@ def _request_url(url):
     raise CrawlerRetryableError('抓取请求失败，请稍后重试')
 
 
+def _import_crawler_crypto():
+    try:
+        from Crypto.PublicKey import RSA
+        from Crypto.Cipher import PKCS1_v1_5, AES
+        return RSA, PKCS1_v1_5, AES
+    except Exception as exc:
+        raise CrawlerPermanentError('缺少 pycryptodome 依赖，无法抓取 AliceSW 章节正文') from exc
+
+
+def _is_alicesw_site_rule(rule=None, source_url=''):
+    host_pattern = str((rule or {}).get('host_pattern') or '').strip().lower()
+    if host_pattern and (
+        host_pattern == ALICESW_HOST
+        or host_pattern.endswith('.alicesw.com')
+        or host_pattern == '*.alicesw.com'
+    ):
+        return True
+
+    hostname = (urlparse(source_url or '').hostname or '').strip().lower()
+    return hostname == ALICESW_HOST or hostname.endswith('.alicesw.com')
+
+
+def _looks_like_alicesw_placeholder_text(text):
+    sample = str(text or '')
+    if not sample:
+        return True
+    return (
+        '章节加载中' in sample
+        or ('加载中' in sample and '快速导航' in sample and '最近阅读' in sample)
+    )
+
+
+def _extract_alicesw_chapter_request_params(raw_html):
+    block_match = re.search(r'book\.initial\s*=\s*\{(.*?)\}\s*;', raw_html or '', re.IGNORECASE | re.DOTALL)
+    if not block_match:
+        return None
+
+    block = block_match.group(1)
+
+    def _extract(pattern):
+        match = re.search(pattern, block, re.IGNORECASE)
+        return (match.group(1) if match else '').strip()
+
+    source_id = _extract(r'source_id\s*:\s*(\d+)')
+    chapter_id = _extract(r'chapter_id\s*:\s*[\'"]([^\'"]+)[\'"]')
+    chapter_t = _extract(r'\bt\s*:\s*[\'"]?(\d+)[\'"]?')
+    chapter_sign = _extract(r'sign\s*:\s*[\'"]([^\'"]+)[\'"]')
+
+    if not all((source_id, chapter_id, chapter_t, chapter_sign)):
+        return None
+
+    return {
+        'source_id': source_id,
+        'chapter_id': chapter_id,
+        'chapter_t': chapter_t,
+        'chapter_sign': chapter_sign,
+    }
+
+
+def _build_alicesw_reader_token(timestamp, source_id, chapter_id):
+    message = f'{ALICESW_READER_TOKEN_PREFIX}{timestamp}{source_id}{chapter_id}{ALICESW_READER_TOKEN_SUFFIX}'
+    return hashlib.sha256(message.encode('utf-8')).hexdigest()
+
+
+def _request_alicesw_chapter_payload(chapter_url, params):
+    source_id = str((params or {}).get('source_id') or '').strip()
+    chapter_id = str((params or {}).get('chapter_id') or '').strip()
+    chapter_t = str((params or {}).get('chapter_t') or '').strip()
+    chapter_sign = str((params or {}).get('chapter_sign') or '').strip()
+    if not all((source_id, chapter_id, chapter_t, chapter_sign)):
+        raise CrawlerRetryableError('AliceSW 章节参数不完整，无法请求章节接口')
+
+    api_url = (
+        f'https://{ALICESW_HOST}/home/chapter/info'
+        f'?id={source_id}&key={chapter_id}&t={chapter_t}&sign={chapter_sign}'
+    )
+    validated_api_url = _validate_crawler_target_url(api_url)
+    validated_referer_url = _validate_crawler_target_url(chapter_url)
+    last_error = None
+
+    for attempt in range(1, CRAWLER_REQUEST_RETRIES + 1):
+        response = None
+        try:
+            timestamp = str(int(time.time()))
+            token = _build_alicesw_reader_token(timestamp, source_id, chapter_id)
+            response = requests.get(
+                validated_api_url,
+                headers={
+                    'User-Agent': CRAWLER_USER_AGENT,
+                    'Referer': validated_referer_url,
+                    'X-Requested-With': 'XMLHttpRequest',
+                    'x-request-timestamp': timestamp,
+                    'x-request-token': token,
+                },
+                timeout=(CRAWLER_CONNECT_TIMEOUT, CRAWLER_READ_TIMEOUT),
+            )
+            _validate_crawler_target_url(response.url or validated_api_url)
+            response.raise_for_status()
+            payload = response.json()
+            if int(payload.get('code') or 0) != 1:
+                raise CrawlerRetryableError(f'AliceSW 章节接口返回异常: {payload.get("msg") or "unknown"}')
+            return payload
+        except CrawlerPermanentError:
+            raise
+        except ValueError as exc:
+            last_error = CrawlerRetryableError('AliceSW 章节接口返回非 JSON 数据')
+            if attempt >= CRAWLER_REQUEST_RETRIES:
+                raise last_error from exc
+        except requests.RequestException as exc:
+            last_error = CrawlerRetryableError(f'AliceSW 章节接口请求失败: {exc}')
+            if attempt >= CRAWLER_REQUEST_RETRIES:
+                raise last_error from exc
+        except CrawlerError as exc:
+            last_error = exc
+            if attempt >= CRAWLER_REQUEST_RETRIES:
+                raise
+        finally:
+            if response is not None:
+                response.close()
+
+        time.sleep(CRAWLER_RETRY_BACKOFF_SECONDS * attempt)
+
+    if last_error:
+        raise last_error
+    raise CrawlerRetryableError('AliceSW 章节接口请求失败')
+
+
+def _decrypt_alicesw_chapter_html(chapter_payload):
+    chapter = ((chapter_payload or {}).get('data') or {}).get('chapter') or {}
+    content_encrypt = str(chapter.get('content_encrypt') or '').strip()
+    aes_key_encrypt = str(chapter.get('aes_key_encrypt') or '').strip()
+    iv_encoded = str(chapter.get('iv') or '').strip()
+    if not (content_encrypt and aes_key_encrypt and iv_encoded):
+        return ''
+
+    RSA, PKCS1_v1_5, AES = _import_crawler_crypto()
+    rsa_key = RSA.import_key(ALICESW_READER_PRIVATE_KEY)
+    rsa_cipher = PKCS1_v1_5.new(rsa_key)
+
+    try:
+        decrypted_key = rsa_cipher.decrypt(base64.b64decode(aes_key_encrypt), b'')
+        if not decrypted_key:
+            return ''
+        aes_key = base64.b64decode(decrypted_key.decode('utf-8'))
+        iv_bytes = base64.b64decode(iv_encoded)
+        cipher_bytes = base64.b64decode(content_encrypt)
+    except Exception as exc:
+        raise CrawlerRetryableError(f'AliceSW 章节解密参数解析失败: {exc}') from exc
+
+    if len(aes_key) not in {16, 24, 32}:
+        raise CrawlerRetryableError('AliceSW 章节解密密钥长度异常')
+    if len(iv_bytes) != 16:
+        raise CrawlerRetryableError('AliceSW 章节解密向量长度异常')
+
+    try:
+        plain_bytes = AES.new(aes_key, AES.MODE_CBC, iv_bytes).decrypt(cipher_bytes)
+    except Exception as exc:
+        raise CrawlerRetryableError(f'AliceSW 章节解密失败: {exc}') from exc
+
+    padding = plain_bytes[-1] if plain_bytes else 0
+    if 1 <= padding <= 16 and plain_bytes.endswith(bytes([padding]) * padding):
+        plain_bytes = plain_bytes[:-padding]
+
+    return plain_bytes.decode('utf-8', errors='ignore').strip()
+
+
+def _extract_alicesw_chapter_content(raw_html, chapter_url):
+    params = _extract_alicesw_chapter_request_params(raw_html)
+    if not params:
+        return '', ''
+
+    payload = _request_alicesw_chapter_payload(chapter_url, params)
+    chapter = ((payload or {}).get('data') or {}).get('chapter') or {}
+    chapter_title = str(chapter.get('title') or '').strip()
+    html_content = _decrypt_alicesw_chapter_html(payload)
+    if not html_content:
+        return chapter_title, ''
+
+    return chapter_title, _html_to_text(html_content)
+
+
+def _expand_alicesw_chapter_links(raw_html, base_url, rule, links):
+    chapter_links = list(links or [])
+    if not _is_alicesw_site_rule(rule, base_url):
+        return chapter_links
+
+    listing_url = ''
+    for item in chapter_links:
+        current_url = str((item or {}).get('url') or '')
+        if '/other/chapters/' in current_url:
+            listing_url = current_url
+            break
+
+    if not listing_url:
+        listing_match = re.search(r'(?is)href=["\']([^"\']*/other/chapters/[^"\']+)["\']', raw_html or '')
+        if listing_match:
+            listing_url = urljoin(base_url, html.unescape(listing_match.group(1))).split('#', 1)[0]
+
+    if not listing_url:
+        return chapter_links
+
+    listing_response = _request_url(listing_url)
+    listing_links = _extract_chapter_links_with_rule(listing_response.text, listing_url, rule)
+    if len(listing_links) >= 2:
+        return listing_links
+    return chapter_links
+
+
 def _extract_balanced_tag_block(html_text, start_index, tag_name):
     open_pattern = re.compile(rf'<{tag_name}\b', re.IGNORECASE)
     close_pattern = re.compile(rf'</{tag_name}\s*>', re.IGNORECASE)
@@ -2844,6 +3116,7 @@ def _crawl_task_content(task_id, task):
 
     raw_html = response.text
     chapter_links = _extract_chapter_links(raw_html, task['source_url'], rule=site_rule)
+    chapter_links = _expand_alicesw_chapter_links(raw_html, task['source_url'], rule=site_rule, links=chapter_links)
     title = task.get('title') or _extract_page_title(raw_html, rule=site_rule) or _guess_title_from_url(task['source_url'])
 
     if len(chapter_links) >= 2:
@@ -2858,8 +3131,18 @@ def _crawl_task_content(task_id, task):
 
             try:
                 chapter_response = _request_url(chapter['url'])
-                chapter_title = _extract_page_title(chapter_response.text, rule=site_rule, for_chapter=True) or chapter_title
+                extracted_chapter_title = _extract_page_title(chapter_response.text, rule=site_rule, for_chapter=True)
+                if extracted_chapter_title and '加载中' not in extracted_chapter_title:
+                    chapter_title = extracted_chapter_title
                 chapter_text = _extract_main_text(chapter_response.text, rule=site_rule)
+                if _is_alicesw_site_rule(site_rule, chapter.get('url') or task['source_url']):
+                    api_title, api_text = _extract_alicesw_chapter_content(chapter_response.text, chapter['url'])
+                    if api_title:
+                        chapter_title = api_title
+                    if api_text:
+                        chapter_text = api_text
+                    elif _looks_like_alicesw_placeholder_text(chapter_text):
+                        chapter_text = ''
                 if not chapter_text:
                     raise CrawlerRetryableError('未提取到章节正文')
                 sections.append(f'{chapter_title}\n\n{chapter_text}')
@@ -2920,6 +3203,14 @@ def _crawl_task_content(task_id, task):
             }
 
     main_text = _extract_main_text(raw_html, rule=site_rule)
+    if _is_alicesw_site_rule(site_rule, task['source_url']) and _looks_like_alicesw_placeholder_text(main_text):
+        api_title, api_text = _extract_alicesw_chapter_content(raw_html, task['source_url'])
+        if api_title and '\u52a0\u8f7d\u4e2d' not in api_title:
+            title = api_title
+        if api_text:
+            main_text = api_text
+        else:
+            main_text = ''
     if len(main_text) < 80:
         raise RuntimeError('未能提取正文内容，请确认链接为小说详情页、目录页或正文页')
 
