@@ -180,10 +180,16 @@
                 <div class="view hidden" id="view-crawler">
                     <div class="section-header">
                         <h2>爬虫管理</h2>
-                        <button class="btn btn-primary" id="btn-add-crawler-task">
-                            <i class="fas fa-plus"></i>
-                            新建爬虫任务
-                        </button>
+                        <div class="section-header-actions">
+                            <button class="btn btn-secondary" id="btn-add-crawler-rule">
+                                <i class="fas fa-globe"></i>
+                                站点规则
+                            </button>
+                            <button class="btn btn-primary" id="btn-add-crawler-task">
+                                <i class="fas fa-plus"></i>
+                                新建爬虫任务
+                            </button>
+                        </div>
                     </div>
                     <div class="crawler-content">
                         <div class="crawler-stats">
@@ -206,6 +212,26 @@
                                 <i class="fas fa-book"></i>
                                 <span class="stat-value" id="crawler-downloaded-novels">0</span>
                                 <span class="stat-label">已下载小说</span>
+                            </div>
+                        </div>
+
+                        <div class="crawler-rules-section">
+                            <div class="crawler-rules-header">
+                                <div>
+                                    <h3>站点规则</h3>
+                                    <p>按域名配置标题、正文、章节链接选择器；无匹配时自动回退通用规则。</p>
+                                </div>
+                                <button class="btn btn-sm btn-primary" id="btn-add-crawler-rule-inline">
+                                    <i class="fas fa-plus"></i>
+                                    新增规则
+                                </button>
+                            </div>
+                            <div class="crawler-rules-list" id="crawler-rules-list">
+                                <div class="empty-state">
+                                    <i class="fas fa-globe"></i>
+                                    <h3>暂无站点规则</h3>
+                                    <p>可以先添加 example.com 或 *.example.com 对应的抓取规则</p>
+                                </div>
                             </div>
                         </div>
 
@@ -762,6 +788,27 @@
                         </div>
                     </div>
                     <div class="form-group">
+                        <label>站点规则</label>
+                        <select id="crawler-task-site-rule">
+                            <option value="">自动匹配站点规则（无则使用通用规则）</option>
+                        </select>
+                        <small class="form-hint">如果配置了网站规则，系统会按链接域名自动套用；也可以在这里手动指定。</small>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label class="checkbox-label crawler-task-batch-mode">
+                                <input type="checkbox" id="crawler-task-batch-from-listing">
+                                <span>把当前链接当作列表页，批量抓最近帖子</span>
+                            </label>
+                            <small class="form-hint">适用于像 cool18 这种版块首页列表页，会先提取帖子链接，再逐条创建抓取任务。</small>
+                        </div>
+                        <div class="form-group">
+                            <label>最近抓取数量</label>
+                            <input type="number" id="crawler-task-listing-limit" min="1" max="50" value="10">
+                            <small class="form-hint">仅在开启列表页批量抓取时生效，最大 50。</small>
+                        </div>
+                    </div>
+                    <div class="form-group">
                         <label>简介</label>
                         <textarea id="crawler-task-description" rows="4" placeholder="可选，导入小说库时会写入简介"></textarea>
                     </div>
@@ -778,6 +825,88 @@
             <div class="modal-footer">
                 <button class="btn btn-secondary btn-cancel">取消</button>
                 <button class="btn btn-primary" id="btn-save-crawler-task">保存任务</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 站点规则弹窗 -->
+    <div class="modal" id="crawler-rule-modal">
+        <div class="modal-content modal-lg">
+            <div class="modal-header">
+                <h3 id="crawler-rule-modal-title">新增站点规则</h3>
+                <button class="btn-close">&times;</button>
+            </div>
+            <div class="modal-body">
+                <form id="crawler-rule-form">
+                    <input type="hidden" id="crawler-rule-id">
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>规则名称 *</label>
+                            <input type="text" id="crawler-rule-name" placeholder="例如：起点目录页规则" required>
+                        </div>
+                        <div class="form-group">
+                            <label>站点域名 *</label>
+                            <input type="text" id="crawler-rule-host-pattern" placeholder="example.com 或 *.example.com" required>
+                            <small class="form-hint">支持单域名和通配子域名，例如 www.example.com、example.com、*.example.com</small>
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>书名选择器</label>
+                            <input type="text" id="crawler-rule-title-selector" placeholder="例如：h1.book-name">
+                        </div>
+                        <div class="form-group">
+                            <label>章节标题选择器</label>
+                            <input type="text" id="crawler-rule-chapter-title-selector" placeholder="例如：h1.chapter-title">
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>正文选择器 *</label>
+                        <textarea id="crawler-rule-content-selector" rows="3" placeholder="#content&#10;.article-content" required></textarea>
+                        <small class="form-hint">支持多行填写，系统会按顺序尝试选择器。</small>
+                    </div>
+                    <div class="form-group">
+                        <label>列表页帖子链接选择器</label>
+                        <textarea id="crawler-rule-listing-link-selector" rows="3" placeholder="table a[href*='threadview']&#10;.thread-list a"></textarea>
+                        <small class="form-hint">用于版块首页、列表页批量提取最近帖子；留空时不支持列表页批量抓取。</small>
+                    </div>
+                    <div class="form-group">
+                        <label>同书关联帖子链接选择器</label>
+                        <textarea id="crawler-rule-related-thread-selector" rows="3" placeholder=".post-content a[href*='threadview']"></textarea>
+                        <small class="form-hint">用于正文页里继续抓同书其他分卷/章节帖子，并自动合并到同一本文本中。</small>
+                    </div>
+                    <div class="form-group">
+                        <label>章节链接选择器</label>
+                        <textarea id="crawler-rule-chapter-link-selector" rows="3" placeholder=".chapter-list a&#10;#list a"></textarea>
+                        <small class="form-hint">用于目录页提取章节链接；留空时使用通用链接识别逻辑。</small>
+                    </div>
+                    <div class="form-group">
+                        <label>排除选择器</label>
+                        <textarea id="crawler-rule-remove-selectors" rows="3" placeholder=".ads&#10;.tool-bar&#10;script"></textarea>
+                        <small class="form-hint">会在正文区域内移除这些元素，适合广告、工具栏、推荐区等。</small>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>排序</label>
+                            <input type="number" id="crawler-rule-sort-order" value="100" min="0" max="9999">
+                            <small class="form-hint">值越小优先级越高；多个规则命中同一站点时会优先使用。</small>
+                        </div>
+                        <div class="form-group">
+                            <label class="checkbox-label crawler-rule-active">
+                                <input type="checkbox" id="crawler-rule-is-active" checked>
+                                <span>启用这条规则</span>
+                            </label>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>备注</label>
+                        <textarea id="crawler-rule-notes" rows="3" placeholder="可选：记录适用页面、目录结构、注意事项等"></textarea>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary btn-cancel">取消</button>
+                <button class="btn btn-primary" id="btn-save-crawler-rule">保存规则</button>
             </div>
         </div>
     </div>

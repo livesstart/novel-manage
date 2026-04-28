@@ -6,7 +6,10 @@ import os
 import sqlite3
 import re
 import html
+import ipaddress
+import socket
 import threading
+import time
 from datetime import datetime
 from pathlib import Path
 from urllib.parse import urljoin, urlparse, unquote
@@ -26,9 +29,30 @@ UPLOAD_ROOT = APP_ROOT / 'library'
 TEXT_READABLE_EXTENSIONS = {'.txt'}
 CRAWLER_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0 Safari/537.36'
 CRAWLER_STATUSES = {'pending', 'running', 'completed', 'failed'}
+CRAWLER_CONNECT_TIMEOUT = 10
+CRAWLER_READ_TIMEOUT = 30
+CRAWLER_REQUEST_RETRIES = 3
+CRAWLER_RETRY_BACKOFF_SECONDS = 1.5
+CRAWLER_DEFAULT_MAX_ATTEMPTS = 3
+CRAWLER_MAX_ALLOWED_ATTEMPTS = 5
+CRAWLER_RESPONSE_SIZE_LIMIT = 5 * 1024 * 1024
+CRAWLER_LISTING_BATCH_MAX = 50
+CRAWLER_ALLOW_PRIVATE_TARGETS = os.getenv('ALLOW_PRIVATE_CRAWLER_TARGETS', '').strip().lower() in {'1', 'true', 'yes', 'on'}
 
 crawler_threads = {}
 crawler_threads_lock = threading.Lock()
+
+
+class CrawlerError(RuntimeError):
+    pass
+
+
+class CrawlerPermanentError(CrawlerError):
+    pass
+
+
+class CrawlerRetryableError(CrawlerError):
+    pass
 
 
 def get_db():
@@ -111,14 +135,18 @@ def init_db():
             author TEXT,
             description TEXT,
             category_id INTEGER,
+            site_rule_id INTEGER,
             tag_ids_json TEXT DEFAULT '[]',
             status TEXT DEFAULT 'pending',
             progress INTEGER DEFAULT 0,
             total_chapters INTEGER DEFAULT 0,
             crawled_chapters INTEGER DEFAULT 0,
+            attempt_count INTEGER DEFAULT 0,
+            max_attempts INTEGER DEFAULT 3,
             novel_id INTEGER,
             file_path TEXT,
             last_error TEXT,
+            last_error_at TIMESTAMP,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             started_at TIMESTAMP,
@@ -127,7 +155,31 @@ def init_db():
             FOREIGN KEY (novel_id) REFERENCES novels(id) ON DELETE SET NULL
         )
     ''')
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS crawler_site_rules (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            host_pattern TEXT NOT NULL UNIQUE,
+            title_selector TEXT,
+            content_selector TEXT,
+            listing_link_selector TEXT,
+            related_thread_selector TEXT,
+            chapter_link_selector TEXT,
+            chapter_title_selector TEXT,
+            remove_selectors TEXT,
+            notes TEXT,
+            sort_order INTEGER DEFAULT 100,
+            is_active INTEGER DEFAULT 1,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_crawler_tasks_status_updated ON crawler_tasks(status, updated_at DESC)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_crawler_site_rules_active_sort ON crawler_site_rules(is_active, sort_order ASC, host_pattern ASC)')
+    _ensure_crawler_task_schema(cursor)
+    _ensure_crawler_site_rule_schema(cursor)
+    _seed_default_crawler_site_rules(cursor)
+    _recover_interrupted_crawler_tasks(cursor)
 
     conn.commit()
     conn.close()
@@ -1805,6 +1857,141 @@ def _now_timestamp():
     return datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
 
+def _ensure_table_columns(cursor, table_name, required_columns):
+    cursor.execute(f'PRAGMA table_info({table_name})')
+    existing_columns = {row['name'] for row in cursor.fetchall()}
+
+    for column_name, definition in required_columns.items():
+        if column_name not in existing_columns:
+            cursor.execute(f'ALTER TABLE {table_name} ADD COLUMN {column_name} {definition}')
+
+
+def _ensure_crawler_task_schema(cursor):
+    _ensure_table_columns(cursor, 'crawler_tasks', {
+        'attempt_count': 'INTEGER DEFAULT 0',
+        'max_attempts': f'INTEGER DEFAULT {CRAWLER_DEFAULT_MAX_ATTEMPTS}',
+        'last_error_at': 'TIMESTAMP',
+        'site_rule_id': 'INTEGER'
+    })
+
+
+def _ensure_crawler_site_rule_schema(cursor):
+    _ensure_table_columns(cursor, 'crawler_site_rules', {
+        'title_selector': 'TEXT',
+        'content_selector': 'TEXT',
+        'listing_link_selector': 'TEXT',
+        'related_thread_selector': 'TEXT',
+        'chapter_link_selector': 'TEXT',
+        'chapter_title_selector': 'TEXT',
+        'remove_selectors': 'TEXT',
+        'notes': 'TEXT',
+        'sort_order': 'INTEGER DEFAULT 100',
+        'is_active': 'INTEGER DEFAULT 1',
+        'updated_at': 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP'
+    })
+
+
+def _seed_default_crawler_site_rules(cursor):
+    defaults = [
+        {
+            'name': 'cool18 禁忌书屋帖子页',
+            'host_pattern': 'www.cool18.com',
+            'title_selector': '.main-title',
+            'content_selector': '.post-content',
+            'listing_link_selector': 'table a[href*="app=forum&act=threadview&tid="]',
+            'related_thread_selector': '.post-content a[href*="app=forum&act=threadview&tid="]',
+            'chapter_link_selector': '',
+            'chapter_title_selector': '.main-title',
+            'remove_selectors': '.view_ad_incontent\n.ad-container\n.top-nav-container\nscript\nstyle',
+            'notes': '适用于 cool18 禁忌书屋 threadview 帖子页；建议直接粘贴帖子详情页链接，不要使用版块首页列表链接。',
+            'sort_order': 80,
+            'is_active': 1,
+        }
+    ]
+
+    for item in defaults:
+        cursor.execute('SELECT id, listing_link_selector, related_thread_selector, chapter_title_selector, title_selector, content_selector FROM crawler_site_rules WHERE host_pattern = ?', (item['host_pattern'],))
+        existing = cursor.fetchone()
+        if existing:
+            updates = []
+            params = []
+            if not (existing['listing_link_selector'] or '').strip() and item.get('listing_link_selector'):
+                updates.append('listing_link_selector = ?')
+                params.append(item['listing_link_selector'])
+            if not (existing['related_thread_selector'] or '').strip() and item.get('related_thread_selector'):
+                updates.append('related_thread_selector = ?')
+                params.append(item['related_thread_selector'])
+            if not (existing['chapter_title_selector'] or '').strip() and item.get('chapter_title_selector'):
+                updates.append('chapter_title_selector = ?')
+                params.append(item['chapter_title_selector'])
+            if not (existing['title_selector'] or '').strip() and item.get('title_selector'):
+                updates.append('title_selector = ?')
+                params.append(item['title_selector'])
+            if not (existing['content_selector'] or '').strip() and item.get('content_selector'):
+                updates.append('content_selector = ?')
+                params.append(item['content_selector'])
+            if updates:
+                updates.append('updated_at = ?')
+                params.append(_now_timestamp())
+                params.append(existing['id'])
+                cursor.execute(f'UPDATE crawler_site_rules SET {", ".join(updates)} WHERE id = ?', params)
+            continue
+        cursor.execute(
+            '''
+            INSERT INTO crawler_site_rules (
+                name, host_pattern, title_selector, content_selector, listing_link_selector, related_thread_selector,
+                chapter_link_selector, chapter_title_selector,
+                remove_selectors, notes, sort_order, is_active, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''',
+            (
+                item['name'],
+                item['host_pattern'],
+                item['title_selector'],
+                item['content_selector'],
+                item['listing_link_selector'],
+                item['related_thread_selector'],
+                item['chapter_link_selector'],
+                item['chapter_title_selector'],
+                item['remove_selectors'],
+                item['notes'],
+                item['sort_order'],
+                item['is_active'],
+                _now_timestamp(),
+            )
+        )
+
+
+def _recover_interrupted_crawler_tasks(cursor):
+    now = _now_timestamp()
+    cursor.execute(
+        '''
+        UPDATE crawler_tasks
+        SET status = 'pending',
+            progress = 0,
+            total_chapters = 0,
+            crawled_chapters = 0,
+            started_at = NULL,
+            finished_at = NULL,
+            last_error = ?,
+            last_error_at = ?,
+            updated_at = ?
+        WHERE status = 'running'
+        ''',
+        ('任务在服务重启后已恢复为待执行状态，请重新开始抓取', now, now)
+    )
+
+
+def _sanitize_crawler_max_attempts(value):
+    try:
+        attempts = int(value)
+    except (TypeError, ValueError):
+        attempts = CRAWLER_DEFAULT_MAX_ATTEMPTS
+
+    return max(1, min(attempts, CRAWLER_MAX_ALLOWED_ATTEMPTS))
+
+
 def _safe_json_list(value):
     if isinstance(value, list):
         return value
@@ -1817,11 +2004,400 @@ def _safe_json_list(value):
         return []
 
 
-def _serialize_crawler_task(row):
+def _sanitize_crawler_rule_sort_order(value):
+    try:
+        return max(0, min(int(value), 9999))
+    except (TypeError, ValueError):
+        return 100
+
+
+def _sanitize_crawler_listing_limit(value):
+    try:
+        limit = int(value)
+    except (TypeError, ValueError):
+        limit = 10
+    return max(1, min(limit, CRAWLER_LISTING_BATCH_MAX))
+
+
+def _normalize_crawler_host_pattern(value):
+    host = str(value or '').strip().lower()
+    host = re.sub(r'^[a-z]+://', '', host)
+    host = host.split('/', 1)[0].split('?', 1)[0].split('#', 1)[0].strip()
+    if not host:
+        raise ValueError('请填写站点域名，例如 example.com 或 *.example.com')
+
+    is_wildcard = host.startswith('*.')
+    normalized = host[2:] if is_wildcard else host
+    normalized = normalized.split(':', 1)[0].strip('.')
+
+    if not normalized or '.' not in normalized:
+        raise ValueError('站点域名格式不正确，例如 example.com 或 *.example.com')
+    if '..' in normalized or normalized.startswith('-') or normalized.endswith('-'):
+        raise ValueError('站点域名格式不正确')
+    if not re.fullmatch(r'[a-z0-9.-]+', normalized):
+        raise ValueError('站点域名仅支持字母、数字、点和短横线')
+
+    return f'*.{normalized}' if is_wildcard else normalized
+
+
+def _iter_crawler_selectors(value):
+    for raw_line in str(value or '').splitlines():
+        selector = raw_line.strip()
+        if selector:
+            yield selector
+
+
+def _import_bs4():
+    try:
+        from bs4 import BeautifulSoup
+        return BeautifulSoup
+    except ImportError as exc:
+        raise CrawlerPermanentError('缺少爬虫规则解析依赖，请先安装 beautifulsoup4') from exc
+
+
+def _serialize_crawler_site_rule(row):
     item = dict(row)
-    item['tag_ids'] = [int(tag_id) for tag_id in _safe_json_list(item.get('tag_ids_json')) if str(tag_id).isdigit()]
-    item.pop('tag_ids_json', None)
+    item['sort_order'] = _sanitize_crawler_rule_sort_order(item.get('sort_order'))
+    item['is_active'] = bool(item.get('is_active', 1))
+    item['host_pattern'] = _normalize_crawler_host_pattern(item.get('host_pattern'))
+    for key in (
+        'title_selector',
+        'content_selector',
+        'listing_link_selector',
+        'related_thread_selector',
+        'chapter_link_selector',
+        'chapter_title_selector',
+        'remove_selectors',
+        'notes',
+    ):
+        item[key] = str(item.get(key) or '').strip()
     return item
+
+
+def _fetch_crawler_site_rule(rule_id):
+    if not rule_id:
+        return None
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute('SELECT * FROM crawler_site_rules WHERE id = ?', (rule_id,))
+    row = cursor.fetchone()
+    conn.close()
+    return _serialize_crawler_site_rule(row) if row else None
+
+
+def _fetch_crawler_site_rules(active_only=False):
+    conn = get_db()
+    cursor = conn.cursor()
+    query = 'SELECT * FROM crawler_site_rules'
+    params = []
+    if active_only:
+        query += ' WHERE is_active = 1'
+    query += ' ORDER BY sort_order ASC, LENGTH(host_pattern) DESC, host_pattern ASC'
+    cursor.execute(query, params)
+    rows = cursor.fetchall()
+    conn.close()
+    return [_serialize_crawler_site_rule(row) for row in rows]
+
+
+def _build_crawler_site_rule_payload(data):
+    payload = {
+        'name': str((data or {}).get('name') or '').strip(),
+        'host_pattern': _normalize_crawler_host_pattern((data or {}).get('host_pattern') or ''),
+        'title_selector': str((data or {}).get('title_selector') or '').strip(),
+        'content_selector': str((data or {}).get('content_selector') or '').strip(),
+        'listing_link_selector': str((data or {}).get('listing_link_selector') or '').strip(),
+        'related_thread_selector': str((data or {}).get('related_thread_selector') or '').strip(),
+        'chapter_link_selector': str((data or {}).get('chapter_link_selector') or '').strip(),
+        'chapter_title_selector': str((data or {}).get('chapter_title_selector') or '').strip(),
+        'remove_selectors': str((data or {}).get('remove_selectors') or '').strip(),
+        'notes': str((data or {}).get('notes') or '').strip(),
+        'sort_order': _sanitize_crawler_rule_sort_order((data or {}).get('sort_order')),
+        'is_active': 1 if bool((data or {}).get('is_active', True)) else 0,
+    }
+
+    if not payload['name']:
+        raise ValueError('请填写规则名称')
+    if not payload['content_selector']:
+        raise ValueError('请至少填写正文选择器')
+
+    return payload
+
+
+def _host_matches_crawler_pattern(hostname, pattern):
+    hostname = str(hostname or '').strip().lower().strip('.')
+    pattern = str(pattern or '').strip().lower().strip('.')
+    if not hostname or not pattern:
+        return False
+    if pattern.startswith('*.'):
+        suffix = pattern[2:]
+        return hostname == suffix or hostname.endswith(f'.{suffix}')
+    return hostname == pattern
+
+
+def _resolve_crawler_site_rule(source_url, preferred_rule_id=None, rules=None):
+    if preferred_rule_id:
+        explicit_rule = _fetch_crawler_site_rule(preferred_rule_id)
+        if explicit_rule:
+            return explicit_rule
+
+    hostname = (urlparse(source_url or '').hostname or '').strip().lower()
+    if not hostname:
+        return None
+
+    candidates = rules if rules is not None else _fetch_crawler_site_rules(active_only=True)
+    matched = [rule for rule in candidates if rule.get('is_active') and _host_matches_crawler_pattern(hostname, rule.get('host_pattern'))]
+    if not matched:
+        return None
+
+    matched.sort(key=lambda item: (
+        1 if str(item.get('host_pattern') or '').startswith('*.') else 0,
+        -len(str(item.get('host_pattern') or '')),
+        _sanitize_crawler_rule_sort_order(item.get('sort_order')),
+        item.get('id') or 0,
+    ))
+    return matched[0]
+
+
+def _select_first_crawler_element(soup, selector_text):
+    for selector in _iter_crawler_selectors(selector_text):
+        try:
+            element = soup.select_one(selector)
+        except Exception:
+            continue
+        if element is not None:
+            return element
+    return None
+
+
+def _select_many_crawler_elements(soup, selector_text):
+    for selector in _iter_crawler_selectors(selector_text):
+        try:
+            elements = soup.select(selector)
+        except Exception:
+            continue
+        if elements:
+            return elements
+    return []
+
+
+def _remove_crawler_elements(scope, selector_text):
+    for selector in _iter_crawler_selectors(selector_text):
+        try:
+            elements = scope.select(selector)
+        except Exception:
+            continue
+        for element in elements:
+            element.decompose()
+
+
+def _extract_rule_selected_text(raw_html, selector_text, remove_selectors=''):
+    if not str(selector_text or '').strip():
+        return ''
+
+    BeautifulSoup = _import_bs4()
+    soup = BeautifulSoup(raw_html or '', 'html.parser')
+    target = _select_first_crawler_element(soup, selector_text)
+    if target is None:
+        return ''
+
+    target = BeautifulSoup(str(target), 'html.parser')
+    if remove_selectors:
+        _remove_crawler_elements(target, remove_selectors)
+    return _html_to_text(str(target)).strip()
+
+
+def _extract_chapter_links_with_rule(raw_html, base_url, rule):
+    selector_text = (rule or {}).get('chapter_link_selector')
+    if not str(selector_text or '').strip():
+        return []
+
+    BeautifulSoup = _import_bs4()
+    soup = BeautifulSoup(raw_html or '', 'html.parser')
+    source_host = (urlparse(base_url or '').hostname or '').strip().lower()
+    host_pattern = str((rule or {}).get('host_pattern') or '').strip().lower()
+    links = []
+    seen = set()
+
+    for element in _select_many_crawler_elements(soup, selector_text):
+        candidates = [element] if getattr(element, 'name', None) == 'a' and element.get('href') else element.select('a[href]')
+        for anchor in candidates:
+            href = html.unescape((anchor.get('href') or '').strip())
+            if not href or href.startswith(('javascript:', '#', 'mailto:')):
+                continue
+
+            full_url = urljoin(base_url, href).split('#', 1)[0]
+            parsed = urlparse(full_url)
+            if parsed.scheme not in ('http', 'https'):
+                continue
+            target_host = (parsed.hostname or '').strip().lower()
+            if host_pattern:
+                if target_host and not _host_matches_crawler_pattern(target_host, host_pattern):
+                    continue
+            elif source_host and target_host and target_host != source_host:
+                continue
+
+            label = _html_to_text(str(anchor)).strip()
+            if not label:
+                label = _html_to_text(anchor.get_text(' ', strip=True)).strip()
+            if not label:
+                continue
+
+            dedupe_key = full_url.lower()
+            if dedupe_key in seen:
+                continue
+            seen.add(dedupe_key)
+            links.append({'url': full_url, 'title': label})
+
+    return links
+
+
+def _extract_listing_thread_links(raw_html, base_url, rule=None):
+    selector_text = (rule or {}).get('listing_link_selector')
+    host_pattern = str((rule or {}).get('host_pattern') or '').strip().lower()
+    source_host = (urlparse(base_url or '').hostname or '').strip().lower()
+    navigation_labels = {'书库藏文', '本版精华区', '人气热贴', '返回禁忌书屋首页'}
+
+    def _append_link(results, seen, href, label):
+        href = html.unescape((href or '').strip())
+        if not href or href.startswith(('javascript:', '#', 'mailto:')):
+            return
+
+        full_url = urljoin(base_url, href).split('#', 1)[0]
+        parsed = urlparse(full_url)
+        if parsed.scheme not in ('http', 'https'):
+            return
+
+        target_host = (parsed.hostname or '').strip().lower()
+        if host_pattern:
+            if target_host and not _host_matches_crawler_pattern(target_host, host_pattern):
+                return
+        elif source_host and target_host and target_host != source_host:
+            return
+
+        lowered_url = full_url.lower()
+        if 'threadview' not in lowered_url or 'tid=' not in lowered_url:
+            return
+
+        clean_label = re.sub(r'\s+', ' ', (label or '')).strip()
+        if not clean_label or clean_label.isdigit() or clean_label in navigation_labels:
+            return
+        if len(clean_label) > 120:
+            return
+
+        dedupe_key = full_url.lower()
+        if dedupe_key in seen:
+            return
+        seen.add(dedupe_key)
+        results.append({'url': full_url, 'title': clean_label})
+
+    results = []
+    seen = set()
+
+    if selector_text:
+        BeautifulSoup = _import_bs4()
+        soup = BeautifulSoup(raw_html or '', 'html.parser')
+        for element in _select_many_crawler_elements(soup, selector_text):
+            candidates = [element] if getattr(element, 'name', None) == 'a' and element.get('href') else element.select('a[href]')
+            for anchor in candidates:
+                _append_link(results, seen, anchor.get('href'), _html_to_text(str(anchor)))
+        if results:
+            return results
+
+    link_pattern = re.compile(r'(?is)<a[^>]+href=["\']([^"\']+)["\'][^>]*>(.*?)</a>')
+    for href, label_html in link_pattern.findall(raw_html or ''):
+        _append_link(results, seen, href, _html_to_text(label_html))
+
+    return results
+
+
+def _normalize_crawler_sequence_text(value):
+    text = str(value or '')
+    fullwidth_digits = str.maketrans('０１２３４５６７８９', '0123456789')
+    return text.translate(fullwidth_digits)
+
+
+def _extract_crawler_sequence_start(value):
+    text = _normalize_crawler_sequence_text(value)
+    match = re.search(r'(\d{1,4})(?:\s*[-~—－到至]\s*\d{1,4})?', text)
+    if match:
+        try:
+            return int(match.group(1))
+        except (TypeError, ValueError):
+            return 10 ** 9
+    return 10 ** 9
+
+
+def _extract_related_thread_links(raw_html, base_url, rule=None):
+    selector_text = (rule or {}).get('related_thread_selector')
+    if not str(selector_text or '').strip():
+        return []
+
+    BeautifulSoup = _import_bs4()
+    soup = BeautifulSoup(raw_html or '', 'html.parser')
+    source_host = (urlparse(base_url or '').hostname or '').strip().lower()
+    host_pattern = str((rule or {}).get('host_pattern') or '').strip().lower()
+    current_url = urljoin(base_url, '').split('#', 1)[0].lower()
+    links = []
+    seen = set()
+
+    for element in _select_many_crawler_elements(soup, selector_text):
+        candidates = [element] if getattr(element, 'name', None) == 'a' and element.get('href') else element.select('a[href]')
+        for anchor in candidates:
+            href = html.unescape((anchor.get('href') or '').strip())
+            if not href or href.startswith(('javascript:', '#', 'mailto:')):
+                continue
+
+            full_url = urljoin(base_url, href).split('#', 1)[0]
+            parsed = urlparse(full_url)
+            if parsed.scheme not in ('http', 'https'):
+                continue
+
+            target_host = (parsed.hostname or '').strip().lower()
+            if host_pattern:
+                if target_host and not _host_matches_crawler_pattern(target_host, host_pattern):
+                    continue
+            elif source_host and target_host and target_host != source_host:
+                continue
+
+            lowered_url = full_url.lower()
+            if lowered_url == current_url or 'threadview' not in lowered_url or 'tid=' not in lowered_url:
+                continue
+
+            label = _html_to_text(str(anchor)).strip()
+            if not label or label in {'返回主帖', '返回目录', '返回列表'}:
+                continue
+
+            dedupe_key = lowered_url
+            if dedupe_key in seen:
+                continue
+            seen.add(dedupe_key)
+            links.append({'url': full_url, 'title': label})
+
+    links.sort(key=lambda item: (_extract_crawler_sequence_start(item.get('title')), item.get('url') or ''))
+    return links
+
+
+def _apply_effective_rule_to_crawler_task(item, rules=None):
+    rule = _resolve_crawler_site_rule(
+        item.get('source_url'),
+        preferred_rule_id=item.get('site_rule_id'),
+        rules=rules,
+    )
+    item['effective_site_rule_id'] = rule.get('id') if rule else None
+    item['effective_site_rule_name'] = rule.get('name') if rule else '通用规则'
+    item['effective_site_rule_host_pattern'] = rule.get('host_pattern') if rule else ''
+    item['effective_site_rule_mode'] = 'manual' if item.get('site_rule_id') else ('auto' if rule else 'default')
+    return item
+
+
+def _serialize_crawler_task(row, rules=None):
+    item = dict(row)
+    item['attempt_count'] = max(0, int(item.get('attempt_count') or 0))
+    item['max_attempts'] = _sanitize_crawler_max_attempts(item.get('max_attempts'))
+    item['tag_ids'] = [int(tag_id) for tag_id in _safe_json_list(item.get('tag_ids_json')) if str(tag_id).isdigit()]
+    item['site_rule_id'] = int(item['site_rule_id']) if str(item.get('site_rule_id') or '').isdigit() else None
+    item.pop('tag_ids_json', None)
+    return _apply_effective_rule_to_crawler_task(item, rules=rules)
 
 
 def _update_crawler_task(task_id, **fields):
@@ -1858,7 +2434,8 @@ def _fetch_crawler_task(task_id):
     ''', (task_id,))
     row = cursor.fetchone()
     conn.close()
-    return _serialize_crawler_task(row) if row else None
+    rules = _fetch_crawler_site_rules(active_only=True) if row else None
+    return _serialize_crawler_task(row, rules=rules) if row else None
 
 
 def _guess_title_from_url(url):
@@ -1868,16 +2445,131 @@ def _guess_title_from_url(url):
     return name or parsed.netloc or '未命名小说'
 
 
+def _is_disallowed_crawler_ip(ip_obj):
+    return any((
+        ip_obj.is_private,
+        ip_obj.is_loopback,
+        ip_obj.is_link_local,
+        ip_obj.is_multicast,
+        ip_obj.is_reserved,
+        ip_obj.is_unspecified
+    ))
+
+
+def _resolve_crawler_target_ips(hostname):
+    normalized = (hostname or '').strip().strip('[]')
+    if not normalized:
+        raise CrawlerPermanentError('抓取链接缺少有效域名')
+
+    try:
+        return [ipaddress.ip_address(normalized)]
+    except ValueError:
+        pass
+
+    try:
+        infos = socket.getaddrinfo(normalized, None, proto=socket.IPPROTO_TCP)
+    except socket.gaierror as exc:
+        raise CrawlerRetryableError(f'无法解析目标地址: {normalized}') from exc
+
+    resolved_ips = []
+    seen = set()
+    for _, _, _, _, sockaddr in infos:
+        ip_text = (sockaddr[0] or '').split('%', 1)[0]
+        if not ip_text or ip_text in seen:
+            continue
+        seen.add(ip_text)
+        resolved_ips.append(ipaddress.ip_address(ip_text))
+
+    if not resolved_ips:
+        raise CrawlerRetryableError(f'无法解析目标地址: {normalized}')
+
+    return resolved_ips
+
+
+def _validate_crawler_target_url(url):
+    parsed = urlparse((url or '').strip())
+    if parsed.scheme not in ('http', 'https'):
+        raise CrawlerPermanentError('仅支持抓取 http:// 或 https:// 链接')
+
+    if not parsed.netloc or not parsed.hostname:
+        raise CrawlerPermanentError('抓取链接缺少有效域名')
+
+    if CRAWLER_ALLOW_PRIVATE_TARGETS:
+        return parsed.geturl()
+
+    hostname = parsed.hostname.strip().lower()
+    if hostname == 'localhost':
+        raise CrawlerPermanentError('默认禁止抓取本地或内网地址；如需开启，请设置 ALLOW_PRIVATE_CRAWLER_TARGETS=1')
+
+    for ip_obj in _resolve_crawler_target_ips(hostname):
+        if _is_disallowed_crawler_ip(ip_obj):
+            raise CrawlerPermanentError('默认禁止抓取本地或内网地址；如需开启，请设置 ALLOW_PRIVATE_CRAWLER_TARGETS=1')
+
+    return parsed.geturl()
+
+
 def _request_url(url):
-    response = requests.get(
-        url,
-        headers={'User-Agent': CRAWLER_USER_AGENT},
-        timeout=20
-    )
-    response.raise_for_status()
-    if not response.encoding or response.encoding.lower() == 'iso-8859-1':
-        response.encoding = response.apparent_encoding or 'utf-8'
-    return response
+    validated_url = _validate_crawler_target_url(url)
+    last_error = None
+
+    for attempt in range(1, CRAWLER_REQUEST_RETRIES + 1):
+        response = None
+
+        try:
+            response = requests.get(
+                validated_url,
+                headers={'User-Agent': CRAWLER_USER_AGENT},
+                timeout=(CRAWLER_CONNECT_TIMEOUT, CRAWLER_READ_TIMEOUT),
+                stream=True
+            )
+            _validate_crawler_target_url(response.url or validated_url)
+
+            if response.status_code in {429, 500, 502, 503, 504}:
+                raise CrawlerRetryableError(f'目标站点暂时不可用，返回 HTTP {response.status_code}')
+
+            response.raise_for_status()
+
+            payload = bytearray()
+            for chunk in response.iter_content(chunk_size=16384):
+                if not chunk:
+                    continue
+                payload.extend(chunk)
+                if len(payload) > CRAWLER_RESPONSE_SIZE_LIMIT:
+                    limit_mb = CRAWLER_RESPONSE_SIZE_LIMIT // (1024 * 1024)
+                    raise CrawlerPermanentError(f'抓取内容过大，超过 {limit_mb} MB 限制')
+
+            response._content = bytes(payload)
+            response._content_consumed = True
+
+            if not response.encoding or response.encoding.lower() == 'iso-8859-1':
+                response.encoding = response.apparent_encoding or 'utf-8'
+
+            return response
+        except CrawlerPermanentError:
+            raise
+        except requests.HTTPError as exc:
+            status_code = exc.response.status_code if exc.response is not None else 'unknown'
+            if status_code in {429, 500, 502, 503, 504}:
+                last_error = CrawlerRetryableError(f'目标站点暂时不可用，返回 HTTP {status_code}')
+            else:
+                raise CrawlerPermanentError(f'目标站点返回 HTTP {status_code}') from exc
+        except (requests.Timeout, requests.ConnectionError) as exc:
+            last_error = CrawlerRetryableError(f'网络请求失败: {exc}')
+        except requests.RequestException as exc:
+            last_error = CrawlerRetryableError(f'抓取请求失败: {exc}')
+        finally:
+            if response is not None:
+                response.close()
+
+        if attempt < CRAWLER_REQUEST_RETRIES:
+            time.sleep(CRAWLER_RETRY_BACKOFF_SECONDS * attempt)
+
+    if last_error:
+        raise CrawlerRetryableError(
+            f'{last_error}（已自动重试 {CRAWLER_REQUEST_RETRIES} 次）'
+        ) from last_error
+
+    raise CrawlerRetryableError('抓取请求失败，请稍后重试')
 
 
 def _extract_balanced_tag_block(html_text, start_index, tag_name):
@@ -1970,7 +2662,23 @@ def _extract_preferred_html_block(raw_html):
     return raw_html
 
 
-def _extract_main_text(raw_html):
+def _extract_main_text(raw_html, rule=None):
+    if rule:
+        selector_text = rule.get('content_selector')
+        remove_selectors = '\n'.join(filter(None, [
+            rule.get('remove_selectors', ''),
+            rule.get('related_thread_selector', ''),
+        ]))
+        rule_text = _extract_rule_selected_text(
+            raw_html,
+            selector_text,
+            remove_selectors=remove_selectors,
+        )
+        if len(rule_text) >= 20:
+            return rule_text
+        if str(selector_text or '').strip():
+            return ''
+
     block = _extract_preferred_html_block(raw_html)
     text = _html_to_text(block)
     if len(text) >= 120:
@@ -1978,7 +2686,16 @@ def _extract_main_text(raw_html):
     return _html_to_text(raw_html)
 
 
-def _extract_page_title(raw_html):
+def _extract_page_title(raw_html, rule=None, for_chapter=False):
+    if rule:
+        selector_text = rule.get('chapter_title_selector') if for_chapter else rule.get('title_selector')
+        if not selector_text and for_chapter:
+            selector_text = rule.get('title_selector')
+        title = _extract_rule_selected_text(raw_html, selector_text)
+        title = re.sub(r'\s+', ' ', title).strip(' -_|')
+        if title:
+            return title
+
     for pattern in (
         r'(?is)<h1[^>]*>(.*?)</h1>',
         r'(?is)<title[^>]*>(.*?)</title>'
@@ -1993,7 +2710,12 @@ def _extract_page_title(raw_html):
     return ''
 
 
-def _extract_chapter_links(raw_html, base_url):
+def _extract_chapter_links(raw_html, base_url, rule=None):
+    if rule:
+        rule_links = _extract_chapter_links_with_rule(raw_html, base_url, rule)
+        if len(rule_links) >= 1:
+            return rule_links
+
     link_pattern = re.compile(r'(?is)<a[^>]+href=["\']([^"\']+)["\'][^>]*>(.*?)</a>')
     base_host = urlparse(base_url).netloc
     links = []
@@ -2102,6 +2824,12 @@ def _save_crawler_novel(task, crawl_result):
 def _crawl_task_content(task_id, task):
     response = _request_url(task['source_url'])
     content_type = (response.headers.get('Content-Type') or '').lower()
+    active_rules = _fetch_crawler_site_rules(active_only=True)
+    site_rule = _resolve_crawler_site_rule(
+        task.get('source_url'),
+        preferred_rule_id=task.get('site_rule_id'),
+        rules=active_rules,
+    )
 
     if 'text/plain' in content_type or task['source_url'].lower().endswith('.txt'):
         text_content = response.text.strip()
@@ -2115,26 +2843,37 @@ def _crawl_task_content(task_id, task):
         }
 
     raw_html = response.text
-    chapter_links = _extract_chapter_links(raw_html, task['source_url'])
-    title = task.get('title') or _extract_page_title(raw_html) or _guess_title_from_url(task['source_url'])
+    chapter_links = _extract_chapter_links(raw_html, task['source_url'], rule=site_rule)
+    title = task.get('title') or _extract_page_title(raw_html, rule=site_rule) or _guess_title_from_url(task['source_url'])
 
     if len(chapter_links) >= 2:
         total = min(len(chapter_links), 500)
         _update_crawler_task(task_id, total_chapters=total, crawled_chapters=0, progress=0)
         sections = []
+        failed_chapters = 0
+        allowed_failed_chapters = max(2, min(10, total // 5 or 1))
 
         for index, chapter in enumerate(chapter_links[:total], start=1):
-            chapter_response = _request_url(chapter['url'])
-            chapter_title = chapter.get('title') or _extract_page_title(chapter_response.text) or f'第{index}章'
-            chapter_text = _extract_main_text(chapter_response.text)
-            if chapter_text:
+            chapter_title = chapter.get('title') or f'第{index}章'
+
+            try:
+                chapter_response = _request_url(chapter['url'])
+                chapter_title = _extract_page_title(chapter_response.text, rule=site_rule, for_chapter=True) or chapter_title
+                chapter_text = _extract_main_text(chapter_response.text, rule=site_rule)
+                if not chapter_text:
+                    raise CrawlerRetryableError('未提取到章节正文')
                 sections.append(f'{chapter_title}\n\n{chapter_text}')
-            _update_crawler_task(
-                task_id,
-                total_chapters=total,
-                crawled_chapters=index,
-                progress=int(index * 100 / total)
-            )
+            except Exception:
+                failed_chapters += 1
+                if failed_chapters > allowed_failed_chapters and not sections:
+                    raise
+            finally:
+                _update_crawler_task(
+                    task_id,
+                    total_chapters=total,
+                    crawled_chapters=index,
+                    progress=int(index * 100 / total)
+                )
 
         if not sections:
             raise RuntimeError('未能从目录页抓取到有效章节内容，请换一个目录页链接重试')
@@ -2146,7 +2885,41 @@ def _crawl_task_content(task_id, task):
             'chapter_count': len(sections)
         }
 
-    main_text = _extract_main_text(raw_html)
+    related_thread_links = _extract_related_thread_links(raw_html, task['source_url'], rule=site_rule)
+    if related_thread_links:
+        related_candidates = [{'url': task['source_url'], 'title': title, 'raw_html': raw_html}] + related_thread_links
+        related_candidates.sort(key=lambda item: (_extract_crawler_sequence_start(item.get('title')), item.get('url') or ''))
+        total = min(len(related_candidates), CRAWLER_LISTING_BATCH_MAX)
+        _update_crawler_task(task_id, total_chapters=total, crawled_chapters=0, progress=0)
+        sections = []
+
+        for index, item in enumerate(related_candidates[:total], start=1):
+            try:
+                current_html = item.get('raw_html')
+                if not current_html:
+                    current_html = _request_url(item['url']).text
+                section_title = _extract_page_title(current_html, rule=site_rule, for_chapter=True) or item.get('title') or f'第{index}篇'
+                section_text = _extract_main_text(current_html, rule=site_rule)
+                if not section_text:
+                    raise CrawlerRetryableError('未提取到关联帖子正文')
+                sections.append(f'{section_title}\n\n{section_text}')
+            finally:
+                _update_crawler_task(
+                    task_id,
+                    total_chapters=total,
+                    crawled_chapters=index,
+                    progress=int(index * 100 / total)
+                )
+
+        if sections:
+            return {
+                'title': title,
+                'author': task.get('author') or '',
+                'content': '\n\n'.join(sections),
+                'chapter_count': len(sections)
+            }
+
+    main_text = _extract_main_text(raw_html, rule=site_rule)
     if len(main_text) < 80:
         raise RuntimeError('未能提取正文内容，请确认链接为小说详情页、目录页或正文页')
 
@@ -2165,38 +2938,97 @@ def _run_crawler_task(task_id):
         if not task:
             return
 
+        max_attempts = _sanitize_crawler_max_attempts(task.get('max_attempts'))
+        started_at = _now_timestamp()
+        last_error_message = ''
+        last_error_at = None
+
+        for attempt in range(1, max_attempts + 1):
+            update_fields = {
+                'status': 'running',
+                'progress': 0,
+                'total_chapters': 0,
+                'crawled_chapters': 0,
+                'attempt_count': attempt,
+                'max_attempts': max_attempts,
+                'finished_at': None
+            }
+            if attempt == 1:
+                update_fields.update({
+                    'started_at': started_at,
+                    'last_error': None,
+                    'last_error_at': None
+                })
+            else:
+                update_fields.update({
+                    'last_error': f'上次抓取失败，正在进行第 {attempt} 次尝试',
+                    'last_error_at': _now_timestamp()
+                })
+
+            _update_crawler_task(task_id, **update_fields)
+            task = _fetch_crawler_task(task_id)
+            if not task:
+                return
+
+            try:
+                crawl_result = _crawl_task_content(task_id, task)
+                novel_id, file_path = _save_crawler_novel(task, crawl_result)
+
+                _update_crawler_task(
+                    task_id,
+                    title=crawl_result['title'],
+                    author=crawl_result.get('author') or task.get('author') or '',
+                    status='completed',
+                    progress=100,
+                    total_chapters=crawl_result['chapter_count'],
+                    crawled_chapters=crawl_result['chapter_count'],
+                    attempt_count=attempt,
+                    max_attempts=max_attempts,
+                    novel_id=novel_id,
+                    file_path=file_path,
+                    last_error=None,
+                    last_error_at=None,
+                    finished_at=_now_timestamp()
+                )
+                return
+            except CrawlerPermanentError as error:
+                last_error_message = str(error)
+                last_error_at = _now_timestamp()
+                break
+            except Exception as error:
+                last_error_message = str(error)
+                last_error_at = _now_timestamp()
+
+                if attempt < max_attempts:
+                    _update_crawler_task(
+                        task_id,
+                        attempt_count=attempt,
+                        max_attempts=max_attempts,
+                        last_error=f'{last_error_message}；正在准备第 {attempt + 1} 次尝试',
+                        last_error_at=last_error_at
+                    )
+                    time.sleep(min(2 * attempt, 5))
+                    continue
+
+                break
+
         _update_crawler_task(
             task_id,
-            status='running',
-            progress=0,
-            total_chapters=0,
-            crawled_chapters=0,
-            last_error=None,
-            started_at=_now_timestamp(),
-            finished_at=None
-        )
-
-        crawl_result = _crawl_task_content(task_id, task)
-        novel_id, file_path = _save_crawler_novel(task, crawl_result)
-
-        _update_crawler_task(
-            task_id,
-            title=crawl_result['title'],
-            author=crawl_result.get('author') or task.get('author') or '',
-            status='completed',
-            progress=100,
-            total_chapters=crawl_result['chapter_count'],
-            crawled_chapters=crawl_result['chapter_count'],
-            novel_id=novel_id,
-            file_path=file_path,
-            last_error=None,
+            status='failed',
+            attempt_count=max(1, min(max_attempts, int(task.get('attempt_count') or 0) or max_attempts)),
+            max_attempts=max_attempts,
+            last_error=last_error_message or '抓取失败，请稍后重试',
+            last_error_at=last_error_at or _now_timestamp(),
             finished_at=_now_timestamp()
         )
     except Exception as error:
         _update_crawler_task(
             task_id,
             status='failed',
+            attempt_count=1,
+            max_attempts=CRAWLER_DEFAULT_MAX_ATTEMPTS,
             last_error=str(error),
+            last_error_at=_now_timestamp(),
             finished_at=_now_timestamp()
         )
     finally:
@@ -2214,6 +3046,27 @@ def _start_crawler_thread(task_id):
         crawler_threads[task_id] = worker
         worker.start()
         return True
+
+
+def _insert_crawler_task_record(cursor, *, name, source_url, title='', author='', description='', category_id=None, site_rule_id=None, tag_ids=None, max_attempts=None):
+    cursor.execute(
+        '''
+        INSERT INTO crawler_tasks (name, source_url, title, author, description, category_id, site_rule_id, tag_ids_json, status, progress, attempt_count, max_attempts)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', 0, 0, ?)
+        ''',
+        (
+            (name or '').strip() or _guess_title_from_url(source_url),
+            source_url,
+            (title or '').strip(),
+            (author or '').strip(),
+            (description or '').strip(),
+            category_id,
+            site_rule_id,
+            json.dumps(sorted(set(tag_ids or []))),
+            _sanitize_crawler_max_attempts(max_attempts),
+        )
+    )
+    return cursor.lastrowid
 
 
 @app.route('/api/crawler/stats', methods=['GET'])
@@ -2240,6 +3093,125 @@ def get_crawler_stats():
             'downloaded_novels': downloaded_novels
         }
     })
+
+
+@app.route('/api/crawler/rules', methods=['GET'])
+def get_crawler_rules():
+    return jsonify({'success': True, 'data': _fetch_crawler_site_rules(active_only=False)})
+
+
+@app.route('/api/crawler/rules', methods=['POST'])
+def create_crawler_rule():
+    data = request.get_json(silent=True) or {}
+
+    try:
+        payload = _build_crawler_site_rule_payload(data)
+    except ValueError as exc:
+        return jsonify({'success': False, 'message': str(exc)}), 400
+
+    conn = get_db()
+    cursor = conn.cursor()
+    try:
+        cursor.execute(
+            '''
+            INSERT INTO crawler_site_rules (
+                name, host_pattern, title_selector, content_selector, listing_link_selector, related_thread_selector,
+                chapter_link_selector, chapter_title_selector,
+                remove_selectors, notes, sort_order, is_active, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''',
+            (
+                payload['name'],
+                payload['host_pattern'],
+                payload['title_selector'],
+                payload['content_selector'],
+                payload['listing_link_selector'],
+                payload['related_thread_selector'],
+                payload['chapter_link_selector'],
+                payload['chapter_title_selector'],
+                payload['remove_selectors'],
+                payload['notes'],
+                payload['sort_order'],
+                payload['is_active'],
+                _now_timestamp(),
+            )
+        )
+        rule_id = cursor.lastrowid
+        conn.commit()
+    except sqlite3.IntegrityError:
+        conn.rollback()
+        return jsonify({'success': False, 'message': '该站点域名规则已存在'}), 400
+    finally:
+        conn.close()
+
+    rule = _fetch_crawler_site_rule(rule_id)
+    return jsonify({'success': True, 'data': rule})
+
+
+@app.route('/api/crawler/rules/<int:rule_id>', methods=['PUT'])
+def update_crawler_rule(rule_id):
+    existing = _fetch_crawler_site_rule(rule_id)
+    if not existing:
+        return jsonify({'success': False, 'message': '站点规则不存在'}), 404
+
+    data = request.get_json(silent=True) or {}
+    try:
+        payload = _build_crawler_site_rule_payload(data)
+    except ValueError as exc:
+        return jsonify({'success': False, 'message': str(exc)}), 400
+
+    conn = get_db()
+    cursor = conn.cursor()
+    try:
+        cursor.execute(
+            '''
+            UPDATE crawler_site_rules
+            SET name = ?, host_pattern = ?, title_selector = ?, content_selector = ?, listing_link_selector = ?, related_thread_selector = ?,
+                chapter_link_selector = ?, chapter_title_selector = ?,
+                remove_selectors = ?, notes = ?, sort_order = ?, is_active = ?, updated_at = ?
+            WHERE id = ?
+            ''',
+            (
+                payload['name'],
+                payload['host_pattern'],
+                payload['title_selector'],
+                payload['content_selector'],
+                payload['listing_link_selector'],
+                payload['related_thread_selector'],
+                payload['chapter_link_selector'],
+                payload['chapter_title_selector'],
+                payload['remove_selectors'],
+                payload['notes'],
+                payload['sort_order'],
+                payload['is_active'],
+                _now_timestamp(),
+                rule_id,
+            )
+        )
+        conn.commit()
+    except sqlite3.IntegrityError:
+        conn.rollback()
+        return jsonify({'success': False, 'message': '该站点域名规则已存在'}), 400
+    finally:
+        conn.close()
+
+    return jsonify({'success': True, 'data': _fetch_crawler_site_rule(rule_id)})
+
+
+@app.route('/api/crawler/rules/<int:rule_id>', methods=['DELETE'])
+def delete_crawler_rule(rule_id):
+    existing = _fetch_crawler_site_rule(rule_id)
+    if not existing:
+        return jsonify({'success': False, 'message': '站点规则不存在'}), 404
+
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute('UPDATE crawler_tasks SET site_rule_id = NULL WHERE site_rule_id = ?', (rule_id,))
+    cursor.execute('DELETE FROM crawler_site_rules WHERE id = ?', (rule_id,))
+    conn.commit()
+    conn.close()
+    return jsonify({'success': True})
 
 
 @app.route('/api/crawler/tasks', methods=['GET'])
@@ -2273,7 +3245,8 @@ def get_crawler_tasks():
     rows = cursor.fetchall()
     conn.close()
 
-    return jsonify({'success': True, 'data': [_serialize_crawler_task(row) for row in rows]})
+    rules = _fetch_crawler_site_rules(active_only=True)
+    return jsonify({'success': True, 'data': [_serialize_crawler_task(row, rules=rules) for row in rows]})
 
 
 @app.route('/api/crawler/tasks', methods=['POST'])
@@ -2281,9 +3254,14 @@ def create_crawler_task():
     data = request.get_json(silent=True) or {}
     source_url = (data.get('source_url') or '').strip()
     if not source_url:
-        return jsonify({'success': False, 'message': '请填写要抓取的网页链接'}), 400
+        return jsonify({'success': False, 'message': '???????????'}), 400
     if not source_url.startswith(('http://', 'https://')):
-        return jsonify({'success': False, 'message': '链接必须以 http:// 或 https:// 开头'}), 400
+        return jsonify({'success': False, 'message': '????? http:// ? https:// ??'}), 400
+
+    try:
+        source_url = _validate_crawler_target_url(source_url)
+    except CrawlerError as exc:
+        return jsonify({'success': False, 'message': str(exc)}), 400
 
     tag_ids = []
     for value in data.get('tag_ids', []):
@@ -2299,29 +3277,107 @@ def create_crawler_task():
         try:
             category_id = int(category_id)
         except (TypeError, ValueError):
-            return jsonify({'success': False, 'message': '分类参数无效'}), 400
+            return jsonify({'success': False, 'message': '??????'}), 400
+
+    site_rule_id = data.get('site_rule_id')
+    if site_rule_id in ('', None):
+        site_rule_id = None
+    else:
+        try:
+            site_rule_id = int(site_rule_id)
+        except (TypeError, ValueError):
+            return jsonify({'success': False, 'message': '????????'}), 400
+        if not _fetch_crawler_site_rule(site_rule_id):
+            return jsonify({'success': False, 'message': '???????'}), 400
+
+    batch_from_listing = bool(data.get('batch_from_listing'))
+    listing_limit = _sanitize_crawler_listing_limit(data.get('listing_limit'))
+    start_immediately = bool(data.get('start_immediately', True))
+    active_rules = _fetch_crawler_site_rules(active_only=True)
+    resolved_rule = _resolve_crawler_site_rule(source_url, preferred_rule_id=site_rule_id, rules=active_rules)
 
     name = (data.get('name') or data.get('title') or _guess_title_from_url(source_url)).strip()
+    max_attempts = _sanitize_crawler_max_attempts(data.get('max_attempts'))
 
     conn = get_db()
     cursor = conn.cursor()
-    cursor.execute('''
-        INSERT INTO crawler_tasks (name, source_url, title, author, description, category_id, tag_ids_json, status, progress)
-        VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', 0)
-    ''', (
-        name,
-        source_url,
-        (data.get('title') or '').strip(),
-        (data.get('author') or '').strip(),
-        (data.get('description') or '').strip(),
-        category_id,
-        json.dumps(sorted(set(tag_ids)))
-    ))
-    task_id = cursor.lastrowid
-    conn.commit()
-    conn.close()
+    try:
+        if batch_from_listing:
+            if not resolved_rule or not str(resolved_rule.get('listing_link_selector') or '').strip():
+                return jsonify({'success': False, 'message': '???????????????????????????'}), 400
 
-    if bool(data.get('start_immediately', True)):
+            response = _request_url(source_url)
+            thread_links = _extract_listing_thread_links(response.text, source_url, resolved_rule)
+            if not thread_links:
+                return jsonify({'success': False, 'message': '???????????????????????????'}), 400
+
+            effective_rule_id = resolved_rule.get('id') if resolved_rule else site_rule_id
+            title_prefix = (data.get('title') or '').strip()
+            name_prefix = (data.get('name') or '').strip()
+            default_author = (data.get('author') or '').strip()
+            default_description = (data.get('description') or '').strip()
+            created_task_ids = []
+            skipped_count = 0
+
+            for item in thread_links[:listing_limit]:
+                detail_url = _validate_crawler_target_url(item['url'])
+                cursor.execute('SELECT id FROM crawler_tasks WHERE source_url = ? ORDER BY id DESC LIMIT 1', (detail_url,))
+                if cursor.fetchone():
+                    skipped_count += 1
+                    continue
+
+                item_title = item.get('title') or _guess_title_from_url(detail_url)
+                task_title = f'{title_prefix} ? {item_title}' if title_prefix else item_title
+                task_name = f'{name_prefix} ? {item_title}' if name_prefix else item_title
+                task_id = _insert_crawler_task_record(
+                    cursor,
+                    name=task_name,
+                    source_url=detail_url,
+                    title=task_title,
+                    author=default_author,
+                    description=default_description,
+                    category_id=category_id,
+                    site_rule_id=effective_rule_id,
+                    tag_ids=tag_ids,
+                    max_attempts=max_attempts,
+                )
+                created_task_ids.append(task_id)
+
+            conn.commit()
+
+            if start_immediately:
+                for task_id in created_task_ids:
+                    _start_crawler_thread(task_id)
+
+            return jsonify({
+                'success': True,
+                'message': f'??????? {len(created_task_ids)} ?????? {skipped_count} ??????',
+                'data': {
+                    'mode': 'batch_listing',
+                    'found_count': len(thread_links),
+                    'created_count': len(created_task_ids),
+                    'skipped_count': skipped_count,
+                    'tasks': [_fetch_crawler_task(task_id) for task_id in created_task_ids],
+                }
+            })
+
+        task_id = _insert_crawler_task_record(
+            cursor,
+            name=name,
+            source_url=source_url,
+            title=(data.get('title') or '').strip(),
+            author=(data.get('author') or '').strip(),
+            description=(data.get('description') or '').strip(),
+            category_id=category_id,
+            site_rule_id=site_rule_id,
+            tag_ids=tag_ids,
+            max_attempts=max_attempts,
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    if start_immediately:
         _start_crawler_thread(task_id)
 
     return jsonify({'success': True, 'data': _fetch_crawler_task(task_id)})
