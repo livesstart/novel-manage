@@ -1,38 +1,69 @@
 # 本地小说管理器
 
-一个简洁优雅的本地小说管理网页应用，支持分类管理和标签管理。
+一个基于 Flask、SQLite 和原生前端的本地小说管理 Web 应用。它用于整理本地小说文件、维护分类和标签、记录阅读状态，并提供本地 TXT 阅读、批量导入、AI 元数据生成和网页抓取入库等辅助能力。
 
-## 功能特点
+## 功能概览
 
-- **小说管理**：添加、编辑、删除小说，记录文件路径
-- **分类管理**：自定义分类，按类别整理小说
-- **标签管理**：多标签标记，灵活检索
-- **阅读状态**：标记未读、阅读中、已读完
-- **搜索筛选**：按名称、作者、分类、标签、状态筛选
-- **数据统计**：实时显示小说数量统计
+- 小说管理：新增、编辑、删除小说，维护书名、作者、简介、文件路径、分类、标签和阅读状态。
+- 本地阅读：支持 TXT 文件章节识别、章节切换、正文阅读和单本下载。
+- 分类与标签：支持自定义分类、彩色标签、多标签筛选、仅看无标签小说。
+- 批量操作：支持批量添加标签、设置分类、设置阅读状态、删除小说和批量 AI 生成简介/标签。
+- 批量导入：支持选择本地文件夹扫描小说文件，并按文件夹自动推断分类。
+- AI 配置：支持配置 OpenAI、Anthropic、Gemini 兼容接口，测试连接，并用于小说简介和标签生成。
+- 爬虫管理：支持创建抓取任务、站点规则、列表页批量建任务、任务重试、任务恢复和抓取结果入库。
+- 本地优先：数据库和上传文件默认保存在项目本地，方便备份和迁移。
 
-## 项目结构
+## 技术栈
 
-```
+- 后端：Python 3、Flask、Flask-CORS、SQLite
+- 前端：HTML、CSS、原生 JavaScript、Font Awesome
+- AI SDK：OpenAI、Anthropic、Google Generative AI
+- 网页解析：Requests、BeautifulSoup4、chardet
+
+## 目录结构
+
+```text
 novel/
-├── app.py              # Flask后端
-├── requirements.txt    # 依赖列表
-├── README.md          # 说明文档
-├── novels.db          # SQLite数据库（自动生成）
+├── app.py                 # Flask 后端与 API
+├── ai_client.py           # AI 供应商适配与调用封装
+├── requirements.txt       # Python 依赖
+├── README.md              # 项目说明
 ├── templates/
-│   └── index.html     # 前端页面
+│   └── index.html         # 单页应用模板
 ├── static/
 │   ├── css/
-│   │   └── style.css  # 样式文件
+│   │   └── style.css      # 页面样式
 │   └── js/
-│       └── app.js     # 前端逻辑
+│       └── app.js         # 前端交互逻辑
+├── tests/
+│   ├── novel-card-ui.test.js
+│   └── novels-view-hero.test.js
+└── library/               # 本地上传/导入文件目录，运行时生成，不提交
 ```
 
-## 安装运行
+运行时会生成 `novels.db`、日志文件和 `library/` 内容，这些属于本地数据，不建议提交到远程仓库。
+
+## 快速开始
 
 ### 1. 安装依赖
 
+建议先创建虚拟环境：
+
 ```bash
+python -m venv .venv
+```
+
+Windows PowerShell：
+
+```powershell
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+```
+
+macOS / Linux：
+
+```bash
+source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
@@ -42,44 +73,132 @@ pip install -r requirements.txt
 python app.py
 ```
 
-### 3. 访问应用
+默认监听：
 
-打开浏览器访问 http://localhost:5000
+```text
+http://localhost:5000
+```
 
-## 使用说明
+首次启动会自动初始化 SQLite 数据库和必要表结构。
+
+## 常用操作
+
+### 小说列表
+
+进入首页后可以搜索小说名或作者，并按分类、标签、阅读状态筛选。卡片上提供阅读、下载、编辑和删除操作；左上角圆形勾选控件用于批量操作。
 
 ### 添加小说
-1. 点击"添加小说"按钮
-2. 填写小说名称（必填）、作者、简介等信息
-3. 选择分类和标签
-4. 填写本地文件路径
-5. 点击保存
 
-### 管理分类
-1. 点击侧边栏"分类管理"
-2. 新建、编辑或删除分类
+点击“添加小说”，填写书名、作者、简介、分类、状态和标签。可以手动填写文件路径，也可以选择本地文件上传到 `library/`。
 
-### 管理标签
-1. 点击侧边栏"标签管理"
-2. 新建标签时可自定义颜色
-3. 为小说添加标签便于分类检索
+### 批量导入
 
-### 筛选小说
-- 使用顶部搜索框按名称或作者搜索
-- 使用筛选栏按分类、标签、阅读状态筛选
+点击“批量导入”，选择本地文件夹后，系统会扫描支持的小说文件，并可按文件夹自动创建分类。导入时可统一设置标签和默认阅读状态。
 
-## 数据存储
+支持的文件类型包括：
 
-- 所有数据存储在本地 SQLite 数据库 `novels.db` 中
-- 可直接备份此文件来备份数据
+```text
+.txt .epub .pdf .mobi .azw3 .doc .docx .rtf
+```
 
-## 技术栈
+当前在线阅读主要面向 TXT 文件。
 
-- **后端**：Python Flask + SQLite
-- **前端**：原生 HTML + CSS + JavaScript
-- **UI**：Font Awesome 图标
+### AI 功能
 
-## 注意事项
+在“AI 配置”中添加供应商配置并设为启用后，可以：
 
-- 文件路径填写本地文件的绝对路径或相对路径
-- 由于浏览器安全限制，无法直接打开本地文件，会复制路径到剪贴板
+- 测试 AI 对话连接。
+- 在单本小说编辑时生成简介和标签。
+- 对已勾选的多本小说批量生成简介和标签，并逐本确认后写回数据库。
+
+API Key 等敏感配置只保存在本地数据库中，请自行做好本地备份和权限管理。
+
+### 爬虫管理
+
+在“爬虫管理”中可以维护站点规则和抓取任务。
+
+站点规则支持配置：
+
+- 域名匹配规则。
+- 书名、章节标题、正文选择器。
+- 列表页链接选择器。
+- 同书关联帖子选择器。
+- 章节链接选择器。
+- 需要从正文中移除的广告或工具栏选择器。
+
+抓取任务支持：
+
+- 自动匹配或手动指定站点规则。
+- 把当前链接当作列表页，批量创建最近帖子抓取任务。
+- 自动重试、失败原因记录、服务重启后恢复运行中任务。
+- 抓取成功后写入小说库并关联本地文件。
+
+默认情况下，爬虫会拒绝抓取本地地址或内网地址。如果确实需要抓取内网目标，可以在启动前设置：
+
+```powershell
+$env:ALLOW_PRIVATE_CRAWLER_TARGETS='1'
+python app.py
+```
+
+或在 macOS / Linux 中：
+
+```bash
+ALLOW_PRIVATE_CRAWLER_TARGETS=1 python app.py
+```
+
+只建议在可信网络和明确知道目标地址的情况下开启。
+
+## 数据与备份
+
+主要本地数据：
+
+- `novels.db`：SQLite 数据库，保存小说元数据、分类、标签、AI 配置和爬虫任务。
+- `library/`：上传、导入和抓取生成的小说文件。
+- `server-*.log`：本地启动或调试日志。
+
+备份时建议同时备份 `novels.db` 和 `library/`。这些文件默认不纳入 Git。
+
+## 测试与检查
+
+当前仓库包含两个轻量 Node 回归测试：
+
+```bash
+node tests/novels-view-hero.test.js
+node tests/novel-card-ui.test.js
+```
+
+常用提交前检查：
+
+```bash
+python -m py_compile app.py ai_client.py
+node --check static/js/app.js
+node tests/novels-view-hero.test.js
+node tests/novel-card-ui.test.js
+git diff --check
+```
+
+## 部署说明
+
+当前项目面向本地使用和个人书库管理。生产部署前建议至少补充：
+
+- 登录认证和访问控制。
+- HTTPS 与反向代理配置。
+- 更严格的文件上传大小、类型和路径限制。
+- 数据库备份策略。
+- API Key 加密或更安全的密钥管理方式。
+
+## GitHub 推送
+
+本地仓库远端地址：
+
+```bash
+git@github.com:livesstart/novel-manage.git
+```
+
+如果 SSH Key 已配置并拥有仓库权限，可以执行：
+
+```bash
+git push -u origin master
+```
+
+如果出现 `Permission denied (publickey)`，需要先把本机 SSH 公钥添加到 GitHub 账户，或改用已登录的 HTTPS 远端。

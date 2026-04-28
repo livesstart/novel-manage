@@ -37,6 +37,7 @@ ENV/
 *.db
 *.sqlite
 *.sqlite3
+library/
 
 # Logs
 *.log
@@ -53,6 +54,11 @@ instance/
 *.tmp
 *.bak
 *.orig
+.playwright-mcp/
+novel-card-after.png
+novel-card-mobile-after.png
+novel-card-mobile-grid-after.png
+novels-view-no-hero.png
 
 # Fix scripts (one-time use)
 fix_*.py
