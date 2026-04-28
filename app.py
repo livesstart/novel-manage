@@ -6,18 +6,27 @@ import os
 import sqlite3
 import re
 import html
+import asyncio
 import base64
 import hashlib
 import ipaddress
 import socket
+import shutil
+import subprocess
+import tempfile
 import threading
 import time
+import urllib.request
 from datetime import datetime
 from pathlib import Path
-from urllib.parse import urljoin, urlparse, unquote
+from urllib.parse import urljoin, urlparse, unquote, parse_qs
 from flask import Flask, render_template, jsonify, request, send_file
 from flask_cors import CORS
 import requests
+try:
+    import websockets
+except Exception:
+    websockets = None
 
 # ??????????
 NOVEL_EXTENSIONS = {'.txt', '.epub', '.pdf', '.mobi', '.azw3', '.doc', '.docx', '.rtf'}
@@ -41,6 +50,48 @@ CRAWLER_RESPONSE_SIZE_LIMIT = 5 * 1024 * 1024
 CRAWLER_LISTING_BATCH_MAX = 50
 CRAWLER_ALLOW_PRIVATE_TARGETS = os.getenv('ALLOW_PRIVATE_CRAWLER_TARGETS', '').strip().lower() in {'1', 'true', 'yes', 'on'}
 ALICESW_HOST = 'www.alicesw.com'
+KAKUYOMU_HOST_KEYWORDS = ('kakuyomu.jp',)
+SYOSETU_HOST_KEYWORDS = ('syosetu.com',)
+PIXIV_HOST_KEYWORDS = ('pixiv.net',)
+ALPHAPOLIS_HOST_KEYWORDS = ('alphapolis.co.jp',)
+HAMELN_HOST_KEYWORDS = ('syosetu.org',)
+LINOVELIB_HOST_KEYWORDS = ('linovelib.com', 'bilinovel.com')
+LINOVELIB_CHAPTER_PATH_PATTERN = re.compile(r'^/novel/(?P<book_id>\d+)/(?P<chapter_id>\d+)(?:_(?P<page>\d+))?\.html$', re.IGNORECASE)
+KAKUYOMU_WORK_PATH_PATTERN = re.compile(r'^/works/(?P<work_id>\d+)(?:/episodes/(?P<episode_id>\d+))?/?$')
+PIXIV_SERIES_PATH_PATTERN = re.compile(r'^/novel/series/(?P<series_id>\d+)/?$')
+PIXIV_NOVEL_SHOW_PATH = '/novel/show.php'
+EDGE_BROWSER_PATHS = tuple(
+    path
+    for path in (
+        Path(os.environ.get('PROGRAMFILES(X86)', '')) / 'Microsoft/Edge/Application/msedge.exe'
+        if os.environ.get('PROGRAMFILES(X86)')
+        else None,
+        Path(os.environ.get('PROGRAMFILES', '')) / 'Microsoft/Edge/Application/msedge.exe'
+        if os.environ.get('PROGRAMFILES')
+        else None,
+        Path('C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe'),
+        Path('C:/Program Files/Microsoft/Edge/Application/msedge.exe'),
+    )
+    if path is not None
+)
+EDGE_CDP_BOOT_TIMEOUT_SECONDS = 15.0
+EDGE_CDP_PAGE_TIMEOUT_SECONDS = 45.0
+EDGE_CDP_POLL_INTERVAL_SECONDS = 1.0
+LINOVELIB_NOISE_LINE_MARKERS = (
+    '最新网址',
+    '请记住本书首发域名',
+    '请收藏',
+    '下一页',
+    '上一页',
+)
+LINOVELIB_NEXT_PAGE_LABELS = {
+    '下一页',
+    '下一頁',
+    '下一章',
+    'next',
+    'next page',
+    '次へ',
+}
 ALICESW_READER_TOKEN_PREFIX = 'B3wlP9Tzo$0RIdlvX&^sg30^0&feAox%'
 ALICESW_READER_TOKEN_SUFFIX = 'Rs4qM7mGrQ6aTMr8HHvv3WikTcY&kW8R'
 ALICESW_READER_PRIVATE_KEY = '''-----BEGIN RSA PRIVATE KEY-----
@@ -1956,6 +2007,118 @@ def _seed_default_crawler_site_rules(cursor):
             'notes': '适用于 alicesw 的小说详情页、目录页与章节页；章节正文需要通过站点接口解密提取。',
             'sort_order': 90,
             'is_active': 1,
+        },
+        {
+            'name': 'Linovelib 轻小说',
+            'host_pattern': '*.linovelib.com',
+            'title_selector': 'h1.book-title\nh1',
+            'content_selector': '#acontent\n#TextContent\n.read-content',
+            'listing_link_selector': '',
+            'related_thread_selector': '',
+            'chapter_link_selector': '.volume-list .chapter-list a[href]\n#volumes li a[href]',
+            'chapter_title_selector': 'h1\n.title',
+            'remove_selectors': '.cgo\n#footlink\n.mlfy_page\nscript\nstyle',
+            'notes': '支持 Linovelib 目录与正文抓取，并合并同章节分页。',
+            'sort_order': 95,
+            'is_active': 1,
+        },
+        {
+            'name': 'Bilinovel 轻小说',
+            'host_pattern': '*.bilinovel.com',
+            'title_selector': 'h1.book-title\nh1',
+            'content_selector': '#acontent\n#TextContent\n.read-content',
+            'listing_link_selector': '',
+            'related_thread_selector': '',
+            'chapter_link_selector': '.volume-list .chapter-list a[href]\n#volumes li a[href]',
+            'chapter_title_selector': 'h1\n.title',
+            'remove_selectors': '.cgo\n#footlink\n.mlfy_page\nscript\nstyle',
+            'notes': '支持 Bilinovel 目录与正文抓取，并合并同章节分页。',
+            'sort_order': 96,
+            'is_active': 1,
+        },
+        {
+            'name': 'Kakuyomu',
+            'host_pattern': 'kakuyomu.jp',
+            'title_selector': 'h1#workTitle\nh1',
+            'content_selector': '.widget-episodeBody\n.js-episode-body',
+            'listing_link_selector': '',
+            'related_thread_selector': '',
+            'chapter_link_selector': '',
+            'chapter_title_selector': '.widget-episodeTitle\nh1',
+            'remove_selectors': '.widget-toc\nscript\nstyle',
+            'notes': '优先从 __NEXT_DATA__ / __APOLLO_STATE__ 提取目录。',
+            'sort_order': 97,
+            'is_active': 1,
+        },
+        {
+            'name': '小説家になろう',
+            'host_pattern': '*.syosetu.com',
+            'title_selector': '.p-novel__title\n.novel_title\nh1',
+            'content_selector': '.p-novel__text\n#novel_honbun',
+            'listing_link_selector': '',
+            'related_thread_selector': '',
+            'chapter_link_selector': '.p-eplist a[href]\n.index_box a[href]\n.novel_sublist a[href]\n.novel_sublist2 a[href]',
+            'chapter_title_selector': '.p-novel__title\n.novel_subtitle\nh1',
+            'remove_selectors': 'script\nstyle',
+            'notes': '适用于 syosetu / ncode 的目录与正文抓取。',
+            'sort_order': 98,
+            'is_active': 1,
+        },
+        {
+            'name': 'Novel18',
+            'host_pattern': 'novel18.syosetu.com',
+            'title_selector': '.p-novel__title\n.novel_title\nh1',
+            'content_selector': '.p-novel__text\n#novel_honbun',
+            'listing_link_selector': '',
+            'related_thread_selector': '',
+            'chapter_link_selector': '.p-eplist a[href]\n.index_box a[href]\n.novel_sublist a[href]\n.novel_sublist2 a[href]',
+            'chapter_title_selector': '.p-novel__title\n.novel_subtitle\nh1',
+            'remove_selectors': 'script\nstyle',
+            'notes': '适用于 Novel18，抓取时自动附带 over18 cookie。',
+            'sort_order': 99,
+            'is_active': 1,
+        },
+        {
+            'name': 'Pixiv 小说',
+            'host_pattern': 'www.pixiv.net',
+            'title_selector': 'h1\ntitle',
+            'content_selector': '',
+            'listing_link_selector': '',
+            'related_thread_selector': '',
+            'chapter_link_selector': '',
+            'chapter_title_selector': 'h1\ntitle',
+            'remove_selectors': 'script\nstyle',
+            'notes': '支持 Pixiv 单篇与系列；目录和正文通过 ajax 接口抓取。',
+            'sort_order': 100,
+            'is_active': 1,
+        },
+        {
+            'name': 'Hameln',
+            'host_pattern': 'syosetu.org',
+            'title_selector': 'h1\n.title',
+            'content_selector': '#honbun',
+            'listing_link_selector': '',
+            'related_thread_selector': '',
+            'chapter_link_selector': 'table tr a[href$=".html"]',
+            'chapter_title_selector': 'h1\n.title',
+            'remove_selectors': 'script\nstyle',
+            'notes': '支持 Hameln 目录与正文抓取，正文会附加后记内容。',
+            'sort_order': 101,
+            'is_active': 1,
+        },
+        {
+            'name': 'Alphapolis',
+            'host_pattern': 'www.alphapolis.co.jp',
+            'title_selector': 'h1\ntitle',
+            'content_selector': '#novelBody',
+            'listing_link_selector': '',
+            'related_thread_selector': '',
+            'chapter_link_selector': '',
+            'chapter_title_selector': 'h1\n.title',
+            'remove_selectors': '.dots-indicator\n.g-recaptcha\n#LoadingEpisode\nscript\nstyle',
+            'notes': '优先解析 #app-cover-data；必要时通过 Edge CDP 会话兜底抓取。',
+            'sort_order': 102,
+            'is_active': 1,
         }
     ]
 
@@ -2572,7 +2735,103 @@ def _validate_crawler_target_url(url):
     return parsed.geturl()
 
 
-def _request_url(url):
+def _host_matches_keywords(source_url, keywords):
+    hostname = (urlparse(source_url or '').hostname or '').strip().lower()
+    return any(hostname == keyword or hostname.endswith(f'.{keyword}') for keyword in keywords)
+
+
+def _is_linovelib_url(source_url):
+    return _host_matches_keywords(source_url, LINOVELIB_HOST_KEYWORDS)
+
+
+def _is_kakuyomu_url(source_url):
+    return _host_matches_keywords(source_url, KAKUYOMU_HOST_KEYWORDS)
+
+
+def _is_syosetu_url(source_url):
+    hostname = (urlparse(source_url or '').hostname or '').strip().lower()
+    return _host_matches_keywords(source_url, SYOSETU_HOST_KEYWORDS) and 'novel18.' not in hostname
+
+
+def _is_novel18_url(source_url):
+    hostname = (urlparse(source_url or '').hostname or '').strip().lower()
+    return hostname == 'novel18.syosetu.com' or hostname.endswith('.novel18.syosetu.com')
+
+
+def _is_pixiv_url(source_url):
+    return _host_matches_keywords(source_url, PIXIV_HOST_KEYWORDS)
+
+
+def _is_hameln_url(source_url):
+    return _host_matches_keywords(source_url, HAMELN_HOST_KEYWORDS)
+
+
+def _is_alphapolis_url(source_url):
+    return _host_matches_keywords(source_url, ALPHAPOLIS_HOST_KEYWORDS)
+
+
+def _pixiv_novel_id_from_url(source_url):
+    parsed = urlparse(source_url or '')
+    if parsed.path != PIXIV_NOVEL_SHOW_PATH:
+        return None
+    novel_id = parse_qs(parsed.query or '').get('id', [''])[0].strip()
+    return novel_id or None
+
+
+def _pixiv_series_id_from_url(source_url):
+    match = PIXIV_SERIES_PATH_PATTERN.match(urlparse(source_url or '').path)
+    if not match:
+        return None
+    series_id = (match.group('series_id') or '').strip()
+    return series_id or None
+
+
+def _kakuyomu_work_id_from_url(source_url):
+    match = KAKUYOMU_WORK_PATH_PATTERN.match(urlparse(source_url or '').path)
+    if not match:
+        return None
+    work_id = (match.group('work_id') or '').strip()
+    return work_id or None
+
+
+def _build_crawler_request_headers(url, referer=None, extra_headers=None):
+    parsed = urlparse(url or '')
+    origin_referer = referer or (f'{parsed.scheme}://{parsed.netloc}/' if parsed.scheme and parsed.netloc else '')
+    headers = {
+        'User-Agent': CRAWLER_USER_AGENT,
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+    }
+    if origin_referer:
+        headers['Referer'] = origin_referer
+
+    if _is_syosetu_url(url) or _is_novel18_url(url) or _is_hameln_url(url):
+        headers['Accept-Language'] = 'ja,en;q=0.9'
+        headers['Accept-Encoding'] = 'identity'
+    elif _is_pixiv_url(url):
+        headers['Accept-Language'] = 'ja,en;q=0.9'
+
+    if extra_headers:
+        for key, value in extra_headers.items():
+            if value is None:
+                continue
+            headers[str(key)] = str(value)
+
+    return headers
+
+
+def _build_crawler_request_cookies(url, cookies=None):
+    merged = {}
+    if cookies:
+        for key, value in cookies.items():
+            if key and value is not None:
+                merged[str(key)] = str(value)
+
+    if _is_syosetu_url(url) or _is_novel18_url(url):
+        merged.setdefault('over18', 'yes')
+    return merged or None
+
+
+def _request_url(url, referer=None, extra_headers=None, cookies=None):
     validated_url = _validate_crawler_target_url(url)
     last_error = None
 
@@ -2580,9 +2839,16 @@ def _request_url(url):
         response = None
 
         try:
+            request_headers = _build_crawler_request_headers(
+                validated_url,
+                referer=referer,
+                extra_headers=extra_headers,
+            )
+            request_cookies = _build_crawler_request_cookies(validated_url, cookies=cookies)
             response = requests.get(
                 validated_url,
-                headers={'User-Agent': CRAWLER_USER_AGENT},
+                headers=request_headers,
+                cookies=request_cookies,
                 timeout=(CRAWLER_CONNECT_TIMEOUT, CRAWLER_READ_TIMEOUT),
                 stream=True
             )
@@ -2844,6 +3110,664 @@ def _expand_alicesw_chapter_links(raw_html, base_url, rule, links):
     return chapter_links
 
 
+def _is_probable_linovelib_page(soup):
+    return bool(
+        soup.select_one('#volumes')
+        or soup.select_one('#volume-list')
+        or soup.select_one('.volume-list')
+        or soup.select_one('#acontent')
+        or soup.select_one('#TextContent')
+        or soup.select_one("[property='og:novel:book_name']")
+    )
+
+
+def _extract_linovelib_volume_blocks(soup, base_url):
+    items = []
+    seen = set()
+
+    for volume in soup.select('.volume-list .volume'):
+        volume_title = ''
+        title_node = volume.select_one('.volume-info h2, h2.v-line, h3')
+        if title_node and title_node.get_text(' ', strip=True):
+            volume_title = title_node.get_text(' ', strip=True)
+
+        for anchor in volume.select('.chapter-list a[href], ul.chapter-list a[href]'):
+            href = str(anchor.get('href', '')).strip()
+            chapter_title = anchor.get_text(' ', strip=True)
+            if not href or not chapter_title or href.startswith('javascript:'):
+                continue
+            absolute_url = urljoin(base_url, href).split('#', 1)[0]
+            if absolute_url in seen:
+                continue
+            seen.add(absolute_url)
+            if volume_title:
+                chapter_title = f'{volume_title} - {chapter_title}'
+            items.append({'title': chapter_title[:180], 'url': absolute_url})
+
+    return items
+
+
+def _extract_linovelib_chapters(soup, base_url):
+    items = _extract_linovelib_volume_blocks(soup, base_url)
+    if items:
+        return items
+
+    items = []
+    seen = set()
+    current_volume = ''
+
+    for node in soup.select('#volumes li'):
+        classes = node.get('class') or []
+        text = node.get_text(' ', strip=True)
+        if not text:
+            continue
+
+        if 'chapter-bar' in classes:
+            current_volume = text
+            continue
+
+        anchor = node.find('a', href=True)
+        if anchor is None:
+            continue
+
+        href = str(anchor.get('href', '')).strip()
+        chapter_title = anchor.get_text(' ', strip=True) or text
+        if not href or not chapter_title:
+            continue
+
+        absolute_url = urljoin(base_url, href).split('#', 1)[0]
+        if absolute_url in seen:
+            continue
+        seen.add(absolute_url)
+
+        if current_volume:
+            chapter_title = f'{current_volume} - {chapter_title}'
+        items.append({'title': chapter_title[:180], 'url': absolute_url})
+
+    return items
+
+
+def _kakuyomu_state_from_html(raw_html):
+    BeautifulSoup = _import_bs4()
+    soup = BeautifulSoup(raw_html or '', 'html.parser')
+    script = soup.select_one('#__NEXT_DATA__')
+    payload_text = ''
+    if script is not None:
+        payload_text = script.string or script.get_text('', strip=True)
+    if not payload_text:
+        return {}
+
+    try:
+        payload = json.loads(payload_text)
+    except Exception:
+        return {}
+
+    state = (payload.get('props') or {}).get('pageProps', {}).get('__APOLLO_STATE__')
+    return state if isinstance(state, dict) else {}
+
+
+def _kakuyomu_chapters_from_state(state, source_url):
+    work_id = _kakuyomu_work_id_from_url(source_url)
+    if not work_id:
+        return []
+    work = state.get(f'Work:{work_id}')
+    if not isinstance(work, dict):
+        return []
+
+    items = []
+    seen = set()
+    origin = 'https://kakuyomu.jp'
+
+    for toc_ref in work.get('tableOfContents', []):
+        ref_key = toc_ref.get('__ref') if isinstance(toc_ref, dict) else None
+        toc = state.get(str(ref_key or ''))
+        if not isinstance(toc, dict):
+            continue
+
+        chapter_title = ''
+        chapter_ref = toc.get('chapter')
+        if isinstance(chapter_ref, dict):
+            chapter_meta = state.get(str(chapter_ref.get('__ref') or ''))
+            if isinstance(chapter_meta, dict):
+                chapter_title = str(chapter_meta.get('title') or chapter_meta.get('name') or '').strip()
+
+        for episode_ref in toc.get('episodeUnions', []):
+            episode_key = episode_ref.get('__ref') if isinstance(episode_ref, dict) else None
+            episode = state.get(str(episode_key or ''))
+            if not isinstance(episode, dict):
+                continue
+            episode_id = str(episode.get('id') or '').strip()
+            episode_title = str(episode.get('title') or '').strip()
+            if not episode_id or not episode_title:
+                continue
+
+            title = f'{chapter_title} - {episode_title}' if chapter_title else episode_title
+            chapter_url = f'{origin}/works/{work_id}/episodes/{episode_id}'
+            if chapter_url in seen:
+                continue
+            seen.add(chapter_url)
+            items.append({'title': title[:180], 'url': chapter_url})
+
+    return items
+
+
+def _syosetu_chapters_from_soup(soup, base_url):
+    items = []
+    seen = set()
+    current_heading = ''
+
+    for node in soup.select('.p-eplist > *'):
+        classes = node.get('class') or []
+        if 'p-eplist__chapter-title' in classes:
+            current_heading = node.get_text(' ', strip=True)
+            continue
+        if 'p-eplist__sublist' not in classes:
+            continue
+        anchor = node.select_one('a[href]')
+        if anchor is None:
+            continue
+        href = str(anchor.get('href') or '').strip()
+        title = anchor.get_text(' ', strip=True)
+        if not href or not title:
+            continue
+        absolute_url = urljoin(base_url, href).split('#', 1)[0]
+        if absolute_url in seen:
+            continue
+        seen.add(absolute_url)
+        if current_heading and current_heading not in title:
+            title = f'{current_heading} - {title}'
+        items.append({'title': title[:180], 'url': absolute_url})
+
+    if items:
+        return items
+
+    current_heading = ''
+    for node in soup.select('.index_box > *, .novel_sublist2, .novel_sublist, .chapter_title'):
+        classes = node.get('class') or []
+        class_text = ' '.join(classes)
+        if 'chapter_title' in class_text:
+            current_heading = node.get_text(' ', strip=True)
+            continue
+
+        anchor = node.select_one('a[href]')
+        if anchor is None:
+            continue
+        href = str(anchor.get('href') or '').strip()
+        title = anchor.get_text(' ', strip=True)
+        if not href or not title:
+            continue
+        absolute_url = urljoin(base_url, href).split('#', 1)[0]
+        if absolute_url in seen:
+            continue
+        seen.add(absolute_url)
+        if current_heading and current_heading not in title:
+            title = f'{current_heading} - {title}'
+        items.append({'title': title[:180], 'url': absolute_url})
+
+    return items
+
+
+def _hameln_chapters_from_soup(soup, base_url):
+    items = []
+    seen = set()
+
+    for anchor in soup.select("table tr a[href$='.html']"):
+        href = str(anchor.get('href') or '').strip()
+        title = anchor.get_text(' ', strip=True)
+        if not href or not title:
+            continue
+        absolute_url = urljoin(base_url, href).split('#', 1)[0]
+        if absolute_url in seen:
+            continue
+        seen.add(absolute_url)
+        items.append({'title': title[:180], 'url': absolute_url})
+
+    return items
+
+
+def _hameln_chapter_text(soup):
+    body = soup.select_one('#honbun')
+    if body is None:
+        return ''
+    parts = [body.get_text('\n', strip=True)]
+    afterword = soup.select_one('#atogaki')
+    if afterword is not None:
+        afterword_text = afterword.get_text('\n', strip=True)
+        if afterword_text:
+            parts.append(f'后记\n{afterword_text}')
+    return '\n\n'.join(part.strip() for part in parts if part.strip()).strip()
+
+
+def _pixiv_api_headers(referer=None):
+    return {
+        'Accept': 'application/json, text/plain, */*',
+        'Accept-Language': 'ja,en;q=0.9',
+        'X-Requested-With': 'XMLHttpRequest',
+        'Referer': referer or 'https://www.pixiv.net/',
+    }
+
+
+def _pixiv_content_to_text(content):
+    value = str(content or '').replace('\r\n', '\n').replace('\r', '\n')
+    value = value.replace('[newpage]', '\n\n')
+    value = re.sub(r'\[\[rb:([^>]+)\s*>\s*([^\]]+)\]\]', r'\1(\2)', value)
+    value = re.sub(r'\[\[jumpuri:([^>]+)\s*>\s*([^\]]+)\]\]', r'\1(\2)', value)
+    value = re.sub(r'\[jump:(\d+)\]', '', value)
+    value = re.sub(r'\[chapter:[^\]]+\]', '', value)
+    value = re.sub(r'\n{3,}', '\n\n', value)
+    return value.strip()
+
+
+def _fetch_pixiv_json(api_url, referer=None):
+    response = _request_url(
+        api_url,
+        referer=referer or 'https://www.pixiv.net/',
+        extra_headers=_pixiv_api_headers(referer=referer),
+    )
+    try:
+        payload = response.json()
+    except Exception as exc:
+        raise CrawlerRetryableError('Pixiv API 返回了非 JSON 数据') from exc
+
+    if bool(payload.get('error')):
+        raise CrawlerRetryableError(f'Pixiv API 返回错误: {payload.get("message") or "unknown"}')
+
+    return payload.get('body')
+
+
+def _extract_pixiv_series_chapters(series_id, source_url):
+    body = _fetch_pixiv_json(
+        f'https://www.pixiv.net/ajax/novel/series/{series_id}',
+        referer=source_url,
+    )
+    titles_body = _fetch_pixiv_json(
+        f'https://www.pixiv.net/ajax/novel/series/{series_id}/content_titles',
+        referer=source_url,
+    )
+    if not isinstance(body, dict) or not isinstance(titles_body, list):
+        return []
+
+    items = []
+    seen = set()
+    for index, item in enumerate(titles_body, start=1):
+        if not isinstance(item, dict):
+            continue
+        novel_id = str(item.get('id') or '').strip()
+        if not novel_id:
+            continue
+        available = item.get('available')
+        if available is False:
+            continue
+        title = str(item.get('title') or f'Chapter {index}').strip()
+        chapter_url = f'https://www.pixiv.net/novel/show.php?id={novel_id}'
+        if chapter_url in seen:
+            continue
+        seen.add(chapter_url)
+        items.append({'title': title[:180], 'url': chapter_url})
+
+    return items
+
+
+def _alphapolis_cover_data_from_html(raw_html):
+    BeautifulSoup = _import_bs4()
+    soup = BeautifulSoup(raw_html or '', 'html.parser')
+    node = soup.select_one('#app-cover-data')
+    if node is None:
+        return {}
+    try:
+        payload = json.loads(node.get_text(strip=True))
+    except Exception:
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _alphapolis_chapters_from_cover_data(data, base_url):
+    items = []
+    seen = set()
+
+    for group in data.get('chapterEpisodes') or []:
+        if not isinstance(group, dict):
+            continue
+        group_title = str(group.get('title') or '').strip()
+        episodes = group.get('episodes') or []
+        if not isinstance(episodes, list):
+            continue
+
+        for episode in episodes:
+            if not isinstance(episode, dict):
+                continue
+            if episode.get('isPublic') is False:
+                continue
+
+            episode_title = str(episode.get('mainTitle') or episode.get('title') or '').strip()
+            href = str(episode.get('url') or '').strip()
+            if not episode_title or not href:
+                continue
+
+            title = episode_title if not group_title or group_title in episode_title else f'{group_title} / {episode_title}'
+            absolute_url = urljoin(base_url, href).split('#', 1)[0]
+            if absolute_url in seen:
+                continue
+            seen.add(absolute_url)
+            items.append({'title': title[:180], 'url': absolute_url})
+
+    return items
+
+
+def _extract_site_specific_chapter_links(raw_html, base_url):
+    BeautifulSoup = _import_bs4()
+    soup = BeautifulSoup(raw_html or '', 'html.parser')
+
+    if _is_kakuyomu_url(base_url):
+        state = _kakuyomu_state_from_html(raw_html)
+        if state:
+            links = _kakuyomu_chapters_from_state(state, base_url)
+            if links:
+                return links
+        work_id = _kakuyomu_work_id_from_url(base_url)
+        links = []
+        seen = set()
+        for anchor in soup.select("a[href*='/episodes/']"):
+            href = str(anchor.get('href') or '').strip()
+            if not href:
+                continue
+            chapter_url = urljoin(base_url, href).split('#', 1)[0]
+            path = urlparse(chapter_url).path
+            if work_id and f'/works/{work_id}/episodes/' not in path:
+                continue
+            title = re.sub(r'\s+\d{4}年\d{1,2}月\d{1,2}日\s*公開.*$', '', anchor.get_text(' ', strip=True)).strip()
+            if not title or title in {'1話目から読む'}:
+                continue
+            if chapter_url in seen:
+                continue
+            seen.add(chapter_url)
+            links.append({'title': title[:180], 'url': chapter_url})
+        if links:
+            return links
+
+    if _is_syosetu_url(base_url) or _is_novel18_url(base_url):
+        links = _syosetu_chapters_from_soup(soup, base_url)
+        if links:
+            return links
+
+    if _is_hameln_url(base_url):
+        links = _hameln_chapters_from_soup(soup, base_url)
+        if links:
+            return links
+
+    if _is_linovelib_url(base_url):
+        links = []
+        if _is_probable_linovelib_page(soup):
+            links = _extract_linovelib_chapters(soup, base_url)
+            if links:
+                return links
+
+        catalog_candidates = []
+        seen_catalog = set()
+        for anchor in soup.select("a[href*='/catalog'], a[href*='/novel/'][href*='catalog']"):
+            href = str(anchor.get('href') or '').strip()
+            if not href:
+                continue
+            catalog_url = urljoin(base_url, href).split('#', 1)[0]
+            if catalog_url in seen_catalog:
+                continue
+            seen_catalog.add(catalog_url)
+            catalog_candidates.append(catalog_url)
+
+        if not catalog_candidates:
+            book_match = re.search(r'/novel/(\d+)', urlparse(base_url).path)
+            if book_match:
+                catalog_candidates.append(urljoin(base_url, f'/novel/{book_match.group(1)}/catalog'))
+
+        BeautifulSoup = _import_bs4()
+        for catalog_url in catalog_candidates[:3]:
+            try:
+                catalog_response = _request_url(catalog_url, referer=base_url)
+            except Exception:
+                continue
+            catalog_html = catalog_response.text
+            catalog_base = catalog_response.url or catalog_url
+            catalog_soup = BeautifulSoup(catalog_html or '', 'html.parser')
+            links = _extract_linovelib_chapters(catalog_soup, catalog_base)
+            if links:
+                return links
+
+        # 避免回落到通用规则时误抓导航链接
+        return []
+
+    if _is_pixiv_url(base_url):
+        series_id = _pixiv_series_id_from_url(base_url)
+        if series_id:
+            links = _extract_pixiv_series_chapters(series_id, base_url)
+            if links:
+                return links
+
+    if _is_alphapolis_url(base_url):
+        cover_data = _alphapolis_cover_data_from_html(raw_html)
+        cover_base_url = base_url
+        if not cover_data and _looks_like_alphapolis_block_page(raw_html):
+            try:
+                preview_html, resolved_url = _fetch_alphapolis_preview_html(base_url)
+                cover_data = _alphapolis_cover_data_from_html(preview_html)
+                if resolved_url:
+                    cover_base_url = resolved_url
+            except Exception:
+                cover_data = {}
+        if cover_data:
+            links = _alphapolis_chapters_from_cover_data(cover_data, cover_base_url)
+            if links:
+                return links
+
+    return []
+
+
+def _looks_like_alphapolis_block_page(raw_html):
+    sample = str(raw_html or '').lower()
+    return any(
+        marker in sample
+        for marker in (
+            'window.gokuprops',
+            'awswaf',
+            'g-recaptcha',
+            '403 error',
+            'request could not be satisfied',
+            'javascript is disabled',
+            'captcha',
+        )
+    )
+
+
+def _find_edge_executable():
+    for candidate in EDGE_BROWSER_PATHS:
+        if candidate.exists():
+            return candidate
+    return None
+
+
+def _reserve_local_port():
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(('127.0.0.1', 0))
+        return int(sock.getsockname()[1])
+
+
+def _list_edge_targets(port):
+    with urllib.request.urlopen(f'http://127.0.0.1:{port}/json/list', timeout=1) as response:
+        payload = response.read().decode('utf-8', errors='replace')
+    result = json.loads(payload)
+    return result if isinstance(result, list) else []
+
+
+async def _wait_for_edge_page_target(port, timeout_seconds):
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        try:
+            targets = await asyncio.to_thread(_list_edge_targets, port)
+        except Exception:
+            await asyncio.sleep(0.25)
+            continue
+        for target in targets:
+            if target.get('type') == 'page' and target.get('webSocketDebuggerUrl'):
+                return str(target['webSocketDebuggerUrl'])
+        await asyncio.sleep(0.25)
+    raise CrawlerRetryableError('未能连接到 Edge DevTools 页面目标')
+
+
+async def _cdp_send_command(
+    websocket,
+    method,
+    params=None,
+    timeout_seconds=20.0,
+    _state={'id': 0},
+):
+    _state['id'] += 1
+    command_id = _state['id']
+    await websocket.send(json.dumps({'id': command_id, 'method': method, 'params': params or {}}))
+
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        raw = await asyncio.wait_for(websocket.recv(), timeout=max(0.1, deadline - time.monotonic()))
+        payload = json.loads(raw)
+        if payload.get('id') == command_id:
+            if 'error' in payload:
+                error_payload = payload.get('error')
+                message = error_payload.get('message') if isinstance(error_payload, dict) else error_payload
+                raise CrawlerRetryableError(f'Edge DevTools 调用失败: {method} -> {message}')
+            return payload
+    raise CrawlerRetryableError(f'等待 Edge DevTools 返回超时: {method}')
+
+
+async def _cdp_evaluate(websocket, expression, await_promise=False):
+    response = await _cdp_send_command(
+        websocket,
+        'Runtime.evaluate',
+        {
+            'expression': expression,
+            'returnByValue': True,
+            'awaitPromise': await_promise,
+        },
+    )
+    result = response.get('result', {}).get('result', {})
+    if 'value' in result:
+        return result['value']
+    if result.get('type') == 'undefined':
+        return None
+    return result.get('description')
+
+
+async def _fetch_with_edge_cdp_async(
+    url,
+    ready_expression,
+    headless=False,
+    timeout_seconds=EDGE_CDP_PAGE_TIMEOUT_SECONDS,
+    blocked_message='',
+):
+    edge_path = _find_edge_executable()
+    if edge_path is None:
+        raise CrawlerPermanentError('未找到 Microsoft Edge，无法启用浏览器会话兜底抓取')
+    if websockets is None:
+        raise CrawlerPermanentError('缺少 websockets 依赖，无法启用浏览器会话兜底抓取')
+
+    port = _reserve_local_port()
+    user_data_dir = Path(tempfile.mkdtemp(prefix='novel-edge-cdp-'))
+    launch_args = [
+        str(edge_path),
+        f'--remote-debugging-port={port}',
+        '--disable-gpu',
+        '--disable-extensions',
+        '--no-first-run',
+        '--no-default-browser-check',
+        f'--user-data-dir={user_data_dir}',
+        'about:blank',
+    ]
+    if headless:
+        launch_args.insert(2, '--headless=new')
+    else:
+        launch_args.insert(2, '--start-minimized')
+
+    process = subprocess.Popen(launch_args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        ws_url = await _wait_for_edge_page_target(port, EDGE_CDP_BOOT_TIMEOUT_SECONDS)
+        async with websockets.connect(ws_url, max_size=100_000_000) as websocket:
+            await _cdp_send_command(websocket, 'Page.enable')
+            await _cdp_send_command(websocket, 'Runtime.enable')
+            await _cdp_send_command(websocket, 'Network.enable')
+            await _cdp_send_command(websocket, 'Page.navigate', {'url': url})
+
+            deadline = time.monotonic() + timeout_seconds
+            last_title = ''
+            last_url = url
+            while time.monotonic() < deadline:
+                ready = bool(await _cdp_evaluate(websocket, ready_expression))
+                last_title = str(await _cdp_evaluate(websocket, "document.title || ''") or '')
+                last_url = str(await _cdp_evaluate(websocket, "location.href || ''") or url)
+                if ready:
+                    html_value = str(await _cdp_evaluate(websocket, "document.documentElement.outerHTML || ''") or '')
+                    return html_value, (last_url or url)
+                await asyncio.sleep(EDGE_CDP_POLL_INTERVAL_SECONDS)
+
+            html_value = str(await _cdp_evaluate(websocket, "document.documentElement.outerHTML || ''") or '')
+            if 'request could not be satisfied' in last_title.lower() or '403 error' in html_value.lower():
+                raise CrawlerRetryableError(blocked_message or '浏览器会话仍被目标站点拦截')
+            raise CrawlerRetryableError(f'浏览器会话加载超时: {url}')
+    finally:
+        try:
+            process.kill()
+        except Exception:
+            pass
+        try:
+            process.wait(timeout=10)
+        except Exception:
+            pass
+        shutil.rmtree(user_data_dir, ignore_errors=True)
+
+
+def _fetch_with_edge_cdp(url, ready_expression, headless=False, timeout_seconds=EDGE_CDP_PAGE_TIMEOUT_SECONDS, blocked_message=''):
+    return asyncio.run(
+        _fetch_with_edge_cdp_async(
+            url,
+            ready_expression=ready_expression,
+            headless=headless,
+            timeout_seconds=timeout_seconds,
+            blocked_message=blocked_message,
+        )
+    )
+
+
+def _fetch_alphapolis_preview_html(source_url):
+    return _fetch_with_edge_cdp(
+        source_url,
+        headless=True,
+        ready_expression="""
+            (() => {
+                const html = document.documentElement.outerHTML || '';
+                return Boolean(document.querySelector('#app-cover-data')) && !html.includes('window.gokuProps');
+            })()
+        """,
+        blocked_message='Alphapolis 浏览器会话仍被 AWS WAF 拦截，暂时无法抓取目录。',
+    )
+
+
+def _fetch_alphapolis_chapter_html(chapter_url):
+    return _fetch_with_edge_cdp(
+        chapter_url,
+        headless=False,
+        ready_expression="""
+            (() => {
+                const html = document.documentElement.outerHTML || '';
+                if (html.includes('window.gokuProps')) return false;
+                const body = document.querySelector('#novelBody');
+                if (!body) return false;
+                const inner = body.innerHTML || '';
+                const text = body.innerText || '';
+                const imageCount = body.querySelectorAll('img').length;
+                const blocked = inner.includes('g-recaptcha') || inner.includes('LoadingEpisode');
+                return !blocked && (text.trim().length >= 20 || imageCount > 0);
+            })()
+        """,
+        blocked_message='Alphapolis 章节正文仍触发验证码或防护，暂时无法自动抓取。',
+    )
+
+
 def _extract_balanced_tag_block(html_text, start_index, tag_name):
     open_pattern = re.compile(rf'<{tag_name}\b', re.IGNORECASE)
     close_pattern = re.compile(rf'</{tag_name}\s*>', re.IGNORECASE)
@@ -2958,6 +3882,173 @@ def _extract_main_text(raw_html, rule=None):
     return _html_to_text(raw_html)
 
 
+def _extract_linovelib_page_text(soup):
+    content_node = soup.select_one('#acontent, #TextContent, .read-content')
+    if content_node is None:
+        return ''
+
+    for selector in ('.cgo', 'script', 'style', '#footlink', '.mlfy_page'):
+        for node in content_node.select(selector):
+            node.decompose()
+
+    text = content_node.get_text('\n', strip=True)
+    lines = []
+    for raw_line in text.splitlines():
+        line = re.sub(r'\s+', ' ', raw_line).strip()
+        if not line:
+            continue
+        if any(marker in line for marker in LINOVELIB_NOISE_LINE_MARKERS):
+            continue
+        lines.append(line)
+
+    return '\n'.join(lines).strip()
+
+
+def _extract_linovelib_next_page(raw_html, current_url):
+    BeautifulSoup = _import_bs4()
+    soup = BeautifulSoup(raw_html or '', 'html.parser')
+    for anchor in soup.select('.mlfy_page a[href], #footlink a[href]'):
+        label = re.sub(r'\s+', ' ', anchor.get_text(' ', strip=True)).strip().lower()
+        href = str(anchor.get('href') or '').strip()
+        if not href:
+            continue
+        if label in LINOVELIB_NEXT_PAGE_LABELS:
+            return urljoin(current_url, href).split('#', 1)[0]
+
+    match = re.search(r"url_next\s*[:=]\s*'([^']+)'", raw_html or '')
+    if not match:
+        match = re.search(r'url_next\s*[:=]\s*"([^"]+)"', raw_html or '')
+    if not match:
+        return None
+    candidate = match.group(1).strip()
+    if not candidate:
+        return None
+    return urljoin(current_url, candidate).split('#', 1)[0]
+
+
+def _same_linovelib_chapter(source_url, candidate_url):
+    source_match = LINOVELIB_CHAPTER_PATH_PATTERN.match(urlparse(source_url or '').path)
+    candidate_match = LINOVELIB_CHAPTER_PATH_PATTERN.match(urlparse(candidate_url or '').path)
+    if not source_match or not candidate_match:
+        return False
+    return (
+        source_match.group('book_id') == candidate_match.group('book_id')
+        and source_match.group('chapter_id') == candidate_match.group('chapter_id')
+    )
+
+
+def _fetch_linovelib_chapter_text(chapter_url):
+    page_url = chapter_url
+    parts = []
+    visited = set()
+
+    while page_url and page_url not in visited:
+        visited.add(page_url)
+        response = _request_url(page_url, referer=chapter_url)
+        BeautifulSoup = _import_bs4()
+        soup = BeautifulSoup(response.text or '', 'html.parser')
+        text = _extract_linovelib_page_text(soup)
+        if text:
+            parts.append(text)
+
+        next_page = _extract_linovelib_next_page(response.text, response.url or page_url)
+        if not next_page or not _same_linovelib_chapter(chapter_url, next_page):
+            break
+        page_url = next_page
+
+    return '\n\n'.join(part for part in parts if part.strip()).strip()
+
+
+def _extract_syosetu_chapter_text(raw_html):
+    BeautifulSoup = _import_bs4()
+    soup = BeautifulSoup(raw_html or '', 'html.parser')
+    blocks = soup.select('.p-novel__text')
+    if not blocks:
+        body = soup.select_one('#novel_honbun')
+        if body is not None:
+            blocks = [body]
+    text_parts = [block.get_text('\n', strip=True) for block in blocks if block is not None]
+    merged = '\n\n'.join(part.strip() for part in text_parts if str(part).strip())
+    return merged.strip()
+
+
+def _extract_kakuyomu_chapter_text(raw_html):
+    BeautifulSoup = _import_bs4()
+    soup = BeautifulSoup(raw_html or '', 'html.parser')
+    body = soup.select_one('.widget-episodeBody, .js-episode-body')
+    if body is None:
+        return ''
+
+    for selector in ('script', 'style', '.widget-toc', '.widget-episodeTitle'):
+        for node in body.select(selector):
+            node.decompose()
+
+    return body.get_text('\n', strip=True).strip()
+
+
+def _extract_hameln_chapter_text(raw_html):
+    BeautifulSoup = _import_bs4()
+    soup = BeautifulSoup(raw_html or '', 'html.parser')
+    return _hameln_chapter_text(soup)
+
+
+def _extract_alphapolis_chapter_text(raw_html):
+    BeautifulSoup = _import_bs4()
+    soup = BeautifulSoup(raw_html or '', 'html.parser')
+    body = soup.select_one('#novelBody')
+    if body is None:
+        return ''
+
+    for selector in ('script', 'style', '.dots-indicator', '.g-recaptcha', '#LoadingEpisode'):
+        for node in body.select(selector):
+            node.decompose()
+
+    text = body.get_text('\n', strip=True).strip()
+    return text
+
+
+def _fetch_pixiv_chapter_text(chapter_url):
+    novel_id = _pixiv_novel_id_from_url(chapter_url)
+    if not novel_id:
+        return '', ''
+
+    body = _fetch_pixiv_json(
+        f'https://www.pixiv.net/ajax/novel/{novel_id}',
+        referer=chapter_url,
+    )
+    if not isinstance(body, dict):
+        return '', ''
+
+    title = str(body.get('title') or '').strip()
+    text = _pixiv_content_to_text(body.get('content') or '')
+    return title, text
+
+
+def _extract_site_specific_chapter_content(chapter_url, raw_html):
+    if _is_linovelib_url(chapter_url):
+        return '', _fetch_linovelib_chapter_text(chapter_url)
+    if _is_kakuyomu_url(chapter_url):
+        return '', _extract_kakuyomu_chapter_text(raw_html)
+    if _is_syosetu_url(chapter_url) or _is_novel18_url(chapter_url):
+        return '', _extract_syosetu_chapter_text(raw_html)
+    if _is_hameln_url(chapter_url):
+        return '', _extract_hameln_chapter_text(raw_html)
+    if _is_pixiv_url(chapter_url):
+        return _fetch_pixiv_chapter_text(chapter_url)
+    if _is_alphapolis_url(chapter_url):
+        chapter_text = _extract_alphapolis_chapter_text(raw_html)
+        if chapter_text:
+            return '', chapter_text
+        if _looks_like_alphapolis_block_page(raw_html):
+            try:
+                chapter_html, _ = _fetch_alphapolis_chapter_html(chapter_url)
+                return '', _extract_alphapolis_chapter_text(chapter_html)
+            except Exception:
+                return '', ''
+        return '', ''
+    return '', ''
+
+
 def _extract_page_title(raw_html, rule=None, for_chapter=False):
     if rule:
         selector_text = rule.get('chapter_title_selector') if for_chapter else rule.get('title_selector')
@@ -2983,6 +4074,13 @@ def _extract_page_title(raw_html, rule=None, for_chapter=False):
 
 
 def _extract_chapter_links(raw_html, base_url, rule=None):
+    if _is_alphapolis_url(base_url) and '/episode/' in (urlparse(base_url or '').path or ''):
+        return []
+
+    site_specific_links = _extract_site_specific_chapter_links(raw_html, base_url)
+    if len(site_specific_links) >= 1:
+        return site_specific_links
+
     if rule:
         rule_links = _extract_chapter_links_with_rule(raw_html, base_url, rule)
         if len(rule_links) >= 1:
@@ -3093,7 +4191,7 @@ def _save_crawler_novel(task, crawl_result):
         conn.close()
 
 
-def _crawl_task_content(task_id, task):
+def _crawl_task_content_legacy(task_id, task):
     response = _request_url(task['source_url'])
     content_type = (response.headers.get('Content-Type') or '').lower()
     active_rules = _fetch_crawler_site_rules(active_only=True)
@@ -3211,6 +4309,197 @@ def _crawl_task_content(task_id, task):
             main_text = api_text
         else:
             main_text = ''
+    if len(main_text) < 80:
+        raise RuntimeError('未能提取正文内容，请确认链接为小说详情页、目录页或正文页')
+
+    _update_crawler_task(task_id, total_chapters=1, crawled_chapters=1, progress=100)
+    return {
+        'title': title,
+        'author': task.get('author') or '',
+        'content': main_text,
+        'chapter_count': 1
+    }
+
+
+def _crawl_task_content(task_id, task):
+    source_url = task['source_url']
+    response = None
+    raw_html = ''
+    resolved_source_url = source_url
+    content_type = ''
+
+    try:
+        response = _request_url(source_url, referer=source_url)
+        resolved_source_url = response.url or source_url
+        content_type = (response.headers.get('Content-Type') or '').lower()
+        raw_html = response.text
+    except CrawlerError:
+        if not _is_alphapolis_url(source_url):
+            raise
+        raw_html, resolved_source_url = _fetch_alphapolis_preview_html(source_url)
+        content_type = 'text/html'
+
+    if _is_alphapolis_url(resolved_source_url) and _looks_like_alphapolis_block_page(raw_html):
+        try:
+            raw_html, resolved_source_url = _fetch_alphapolis_preview_html(resolved_source_url)
+            content_type = 'text/html'
+        except Exception:
+            pass
+    active_rules = _fetch_crawler_site_rules(active_only=True)
+    site_rule = _resolve_crawler_site_rule(
+        resolved_source_url,
+        preferred_rule_id=task.get('site_rule_id'),
+        rules=active_rules,
+    )
+
+    if 'text/plain' in content_type or resolved_source_url.lower().endswith('.txt'):
+        if response is None:
+            raise RuntimeError('未获取到纯文本响应内容')
+        text_content = response.text.strip()
+        if not text_content:
+            raise RuntimeError('抓取结果为空，请检查链接是否可直接访问文本内容')
+        return {
+            'title': task.get('title') or _guess_title_from_url(resolved_source_url),
+            'author': task.get('author') or '',
+            'content': text_content,
+            'chapter_count': 1
+        }
+
+    chapter_links = _extract_chapter_links(raw_html, resolved_source_url, rule=site_rule)
+    chapter_links = _expand_alicesw_chapter_links(raw_html, resolved_source_url, rule=site_rule, links=chapter_links)
+    title = task.get('title') or _extract_page_title(raw_html, rule=site_rule) or _guess_title_from_url(resolved_source_url)
+
+    if len(chapter_links) >= 2:
+        total = min(len(chapter_links), 500)
+        _update_crawler_task(task_id, total_chapters=total, crawled_chapters=0, progress=0)
+        sections = []
+        failed_chapters = 0
+        allowed_failed_chapters = max(2, min(10, total // 5 or 1))
+
+        for index, chapter in enumerate(chapter_links[:total], start=1):
+            chapter_url = str(chapter.get('url') or '').strip()
+            chapter_title = chapter.get('title') or f'第{index}章'
+            if not chapter_url:
+                failed_chapters += 1
+                continue
+
+            try:
+                try:
+                    chapter_response = _request_url(chapter_url, referer=resolved_source_url)
+                    chapter_html = chapter_response.text
+                except CrawlerError:
+                    if not _is_alphapolis_url(chapter_url):
+                        raise
+                    chapter_html, chapter_resolved_url = _fetch_alphapolis_chapter_html(chapter_url)
+                    if chapter_resolved_url:
+                        chapter_url = chapter_resolved_url
+                if _is_alphapolis_url(chapter_url) and _looks_like_alphapolis_block_page(chapter_html):
+                    try:
+                        chapter_html, chapter_resolved_url = _fetch_alphapolis_chapter_html(chapter_url)
+                        if chapter_resolved_url:
+                            chapter_url = chapter_resolved_url
+                    except Exception:
+                        pass
+
+                extracted_chapter_title = _extract_page_title(chapter_html, rule=site_rule, for_chapter=True)
+                if extracted_chapter_title and '加载中' not in extracted_chapter_title:
+                    chapter_title = extracted_chapter_title
+
+                chapter_text = _extract_main_text(chapter_html, rule=site_rule)
+                if _is_alphapolis_url(chapter_url) and _looks_like_alphapolis_block_page(chapter_html):
+                    chapter_text = ''
+                special_title, special_text = _extract_site_specific_chapter_content(chapter_url, chapter_html)
+                if special_title:
+                    chapter_title = special_title
+                if special_text:
+                    chapter_text = special_text
+
+                if _is_alicesw_site_rule(site_rule, chapter_url):
+                    api_title, api_text = _extract_alicesw_chapter_content(chapter_html, chapter_url)
+                    if api_title:
+                        chapter_title = api_title
+                    if api_text:
+                        chapter_text = api_text
+                    elif _looks_like_alicesw_placeholder_text(chapter_text):
+                        chapter_text = ''
+
+                if not chapter_text:
+                    raise CrawlerRetryableError('未提取到章节正文')
+                sections.append(f'{chapter_title}\n\n{chapter_text}')
+            except Exception:
+                failed_chapters += 1
+                if failed_chapters > allowed_failed_chapters and not sections:
+                    raise
+            finally:
+                _update_crawler_task(
+                    task_id,
+                    total_chapters=total,
+                    crawled_chapters=index,
+                    progress=int(index * 100 / total)
+                )
+
+        if not sections:
+            raise RuntimeError('未能从目录页抓取到有效章节内容，请更换目录页链接重试')
+
+        return {
+            'title': title,
+            'author': task.get('author') or '',
+            'content': '\n\n'.join(sections),
+            'chapter_count': len(sections)
+        }
+
+    related_thread_links = _extract_related_thread_links(raw_html, resolved_source_url, rule=site_rule)
+    if related_thread_links:
+        related_candidates = [{'url': resolved_source_url, 'title': title, 'raw_html': raw_html}] + related_thread_links
+        related_candidates.sort(key=lambda item: (_extract_crawler_sequence_start(item.get('title')), item.get('url') or ''))
+        total = min(len(related_candidates), CRAWLER_LISTING_BATCH_MAX)
+        _update_crawler_task(task_id, total_chapters=total, crawled_chapters=0, progress=0)
+        sections = []
+
+        for index, item in enumerate(related_candidates[:total], start=1):
+            try:
+                current_html = item.get('raw_html')
+                if not current_html:
+                    current_html = _request_url(item['url'], referer=resolved_source_url).text
+                section_title = _extract_page_title(current_html, rule=site_rule, for_chapter=True) or item.get('title') or f'第{index}节'
+                section_text = _extract_main_text(current_html, rule=site_rule)
+                if not section_text:
+                    raise CrawlerRetryableError('未提取到关联正文')
+                sections.append(f'{section_title}\n\n{section_text}')
+            finally:
+                _update_crawler_task(
+                    task_id,
+                    total_chapters=total,
+                    crawled_chapters=index,
+                    progress=int(index * 100 / total)
+                )
+
+        if sections:
+            return {
+                'title': title,
+                'author': task.get('author') or '',
+                'content': '\n\n'.join(sections),
+                'chapter_count': len(sections)
+            }
+
+    main_text = _extract_main_text(raw_html, rule=site_rule)
+    if _is_alphapolis_url(resolved_source_url) and _looks_like_alphapolis_block_page(raw_html):
+        main_text = ''
+    special_title, special_text = _extract_site_specific_chapter_content(resolved_source_url, raw_html)
+    if special_title and '加载中' not in special_title:
+        title = special_title
+    if special_text:
+        main_text = special_text
+
+    if _is_alicesw_site_rule(site_rule, resolved_source_url) and _looks_like_alicesw_placeholder_text(main_text):
+        api_title, api_text = _extract_alicesw_chapter_content(raw_html, resolved_source_url)
+        if api_title and '加载中' not in api_title:
+            title = api_title
+        if api_text:
+            main_text = api_text
+        else:
+            main_text = ''
+
     if len(main_text) < 80:
         raise RuntimeError('未能提取正文内容，请确认链接为小说详情页、目录页或正文页')
 
