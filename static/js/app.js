@@ -215,9 +215,12 @@ function renderNovels() {
         const isSelected = state.selectedNovels.has(novel.id);
         return `
         <div class="novel-card ${isSelected ? 'selected' : ''}" data-id="${novel.id}">
-            <input type="checkbox" class="novel-select-checkbox"
-                   ${isSelected ? 'checked' : ''}
-                   onchange="toggleNovelSelection(${novel.id}, this.checked)">
+            <label class="novel-select-control" aria-label="批量选择小说" title="批量选择">
+                <input type="checkbox" class="novel-select-checkbox"
+                       ${isSelected ? 'checked' : ''}
+                       onchange="toggleNovelSelection(${novel.id}, this.checked)">
+                <span class="novel-select-indicator" aria-hidden="true"></span>
+            </label>
             <div class="novel-header">
                 <div>
                     <div class="novel-title">${escapeHtml(novel.title)}</div>
