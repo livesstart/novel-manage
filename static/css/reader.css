@@ -21,6 +21,7 @@
     display: flex;
     justify-content: space-between;
     align-items: center;
+    gap: 16px;
     padding: 12px 24px;
     border-bottom: 1px solid var(--border-color);
     background-color: var(--card-bg);
@@ -30,24 +31,58 @@
     display: flex;
     align-items: center;
     gap: 16px;
+    flex: 1 1 auto;
     min-width: 0;
+    overflow: hidden;
 }
 
 .reader-title-section h3 {
     font-size: 18px;
     font-weight: 600;
     margin: 0;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .reader-chapter-title {
+    flex: 0 1 auto;
+    min-width: 0;
+    max-width: min(42vw, 520px);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
     font-size: 14px;
     color: var(--text-secondary);
 }
 
 .reader-controls {
     display: flex;
+    flex: 0 0 auto;
+    flex-wrap: wrap;
     align-items: center;
+    justify-content: flex-end;
     gap: 8px;
+}
+
+.reader-immersive-exit {
+    display: none;
+    position: fixed;
+    top: 18px;
+    right: 22px;
+    z-index: 6;
+    width: 44px;
+    height: 44px;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.9);
+    border: 1px solid rgba(148, 163, 184, 0.22);
+    box-shadow: 0 14px 34px rgba(15, 23, 42, 0.14);
+    backdrop-filter: blur(14px);
+}
+
+.reader-immersive-exit:hover {
+    background: #ffffff;
 }
 
 .btn-icon {
@@ -143,9 +178,12 @@
 
 .reader-settings-panel {
     display: grid;
-    grid-template-columns: repeat(5, minmax(140px, 1fr));
-    gap: 14px;
+    grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+    gap: 14px 16px;
     padding: 14px 24px;
+    max-height: min(42vh, 260px);
+    overflow-x: hidden;
+    overflow-y: auto;
     border-bottom: 1px solid var(--border-color);
     background: rgba(255, 255, 255, 0.96);
     box-shadow: 0 10px 24px rgba(15, 23, 42, 0.08);
@@ -179,6 +217,7 @@
 .reader-setting-field select,
 .reader-setting-field input[type="range"] {
     width: 100%;
+    min-width: 0;
 }
 
 .reader-setting-field select {
@@ -198,7 +237,7 @@
 }
 
 .reader-text {
-    max-width: 800px;
+    max-width: 1000px;
     margin: 0 auto;
     font-size: 18px;
     line-height: 1.8;
@@ -302,6 +341,10 @@
 .reader-modal.immersive .reader-sidebar,
 .reader-modal.immersive .reader-settings-panel {
     display: none;
+}
+
+.reader-modal.immersive .reader-immersive-exit {
+    display: inline-flex;
 }
 
 .reader-modal.immersive .reader-content-area {
@@ -475,5 +518,11 @@
     .reader-progress-panel {
         margin: 0;
         max-width: none;
+    }
+}
+
+@media (max-width: 520px) {
+    .reader-settings-panel {
+        grid-template-columns: 1fr;
     }
 }

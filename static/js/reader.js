@@ -3,12 +3,13 @@ const READER_SETTINGS_STORAGE_KEY = 'novel-manager-reader-settings';
 const READER_DEFAULT_SETTINGS = {
     fontSize: 19,
     lineHeight: 1.9,
-    width: 860,
+    width: 1000,
     paragraphSpacing: 1,
     theme: 'light'
 };
 
 const READER_THEMES = ['light', 'sepia', 'green', 'dark'];
+const READER_REQUEST_TIMEOUT_MS = 30000;
 
 const readerState = {
     novelId: null,
@@ -36,7 +37,7 @@ function normalizeReaderSettings(settings = {}) {
     return {
         fontSize: clampReaderNumber(settings.fontSize, 14, 32, READER_DEFAULT_SETTINGS.fontSize),
         lineHeight: clampReaderNumber(settings.lineHeight, 1.4, 2.4, READER_DEFAULT_SETTINGS.lineHeight),
-        width: clampReaderNumber(settings.width, 620, 1080, READER_DEFAULT_SETTINGS.width),
+        width: clampReaderNumber(settings.width, 620, 1280, READER_DEFAULT_SETTINGS.width),
         paragraphSpacing: clampReaderNumber(settings.paragraphSpacing, 0.6, 1.8, READER_DEFAULT_SETTINGS.paragraphSpacing),
         theme
     };
@@ -142,6 +143,41 @@ function setReaderSetting(key, value) {
     applyReaderSettings({ persist: true });
 }
 
+async function fetchReaderJson(url, options = {}) {
+    const timeoutMs = options.timeoutMs || READER_REQUEST_TIMEOUT_MS;
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
+
+    try {
+        const response = await fetch(url, { signal: controller.signal });
+        const payload = await response.json();
+        if (!response.ok && payload && typeof payload === 'object') {
+            return payload;
+        }
+        return payload;
+    } catch (err) {
+        if (err.name === 'AbortError') {
+            throw new Error('加载超时，请稍后重试');
+        }
+        throw err;
+    } finally {
+        window.clearTimeout(timeoutId);
+    }
+}
+
+function showReaderLoadingState() {
+    document.getElementById('reader-loading').classList.remove('hidden');
+    document.getElementById('reader-text').classList.add('hidden');
+    document.getElementById('reader-empty').classList.add('hidden');
+}
+
+function showReaderEmptyState(message) {
+    document.getElementById('reader-loading').classList.add('hidden');
+    document.getElementById('reader-text').classList.add('hidden');
+    document.getElementById('reader-empty').classList.remove('hidden');
+    document.querySelector('#reader-empty p').textContent = message || '无法加载小说';
+}
+
 async function openReader(novelId) {
     readerState.novelId = novelId;
     readerState.currentChapter = 0;
@@ -158,17 +194,21 @@ async function openReader(novelId) {
     setReaderImmersiveMode(false);
     syncReaderResponsiveState();
 
-    document.getElementById('reader-loading').classList.remove('hidden');
-    document.getElementById('reader-text').classList.add('hidden');
-    document.getElementById('reader-empty').classList.add('hidden');
+    showReaderLoadingState();
     updateReaderViewportProgress();
 
     try {
-        const res = await api.get(`/api/novels/${novelId}/read`);
+        const res = await fetchReaderJson(`/api/novels/${novelId}/read`);
 
         if (res.success) {
             const data = res.data;
             readerState.chapters = data.chapters;
+            if (!readerState.chapters.length) {
+                renderTOC();
+                showReaderEmptyState('未识别到可阅读内容');
+                return;
+            }
+
             const readingProgress = data.reading_progress || {};
             const startChapterIndex = normalizeReaderChapterIndex(
                 readingProgress.chapter_index,
@@ -180,14 +220,19 @@ async function openReader(novelId) {
             document.getElementById('reader-toc-count').textContent = `${data.chapters.length}章`;
 
             renderTOC();
-            await loadChapter(startChapterIndex, {
-                scrollPercent: readingProgress.scroll_percent,
-                skipSave: true
-            });
+            if (data.initial_chapter && data.initial_chapter.index === startChapterIndex) {
+                renderReaderChapter(data.initial_chapter, startChapterIndex, {
+                    scrollPercent: readingProgress.scroll_percent,
+                    skipSave: true
+                });
+            } else {
+                await loadChapter(startChapterIndex, {
+                    scrollPercent: readingProgress.scroll_percent,
+                    skipSave: true
+                });
+            }
         } else {
-            document.getElementById('reader-loading').classList.add('hidden');
-            document.getElementById('reader-empty').classList.remove('hidden');
-            document.querySelector('#reader-empty p').textContent = res.message || '无法加载小说';
+            showReaderEmptyState(res.message || '无法加载小说');
 
             if (res.data && res.data.chapters) {
                 readerState.chapters = res.data.chapters;
@@ -196,9 +241,7 @@ async function openReader(novelId) {
         }
     } catch (err) {
         console.error('加载小说失败:', err);
-        document.getElementById('reader-loading').classList.add('hidden');
-        document.getElementById('reader-empty').classList.remove('hidden');
-        document.querySelector('#reader-empty p').textContent = '加载失败: ' + err.message;
+        showReaderEmptyState('加载失败: ' + err.message);
     }
 }
 
@@ -293,6 +336,43 @@ async function saveReadingProgressNow() {
     }
 }
 
+function renderReaderChapter(chapter, index, options = {}) {
+    readerState.currentChapter = index;
+
+    document.getElementById('reader-chapter-title').textContent = chapter.title;
+
+    const contentDiv = document.getElementById('reader-text');
+    const paragraphs = (chapter.content || '').split('\n')
+        .filter(line => line.trim())
+        .map(line => `<p>${escapeHtml(line)}</p>`)
+        .join('');
+
+    contentDiv.innerHTML = paragraphs || '<p>本章暂无内容</p>';
+
+    document.getElementById('reader-progress').textContent =
+        `${index + 1} / ${chapter.total_chapters}`;
+
+    document.getElementById('reader-prev-chapter').disabled = index === 0;
+    document.getElementById('reader-next-chapter').disabled =
+        index >= chapter.total_chapters - 1;
+
+    document.getElementById('reader-loading').classList.add('hidden');
+    document.getElementById('reader-empty').classList.add('hidden');
+    document.getElementById('reader-text').classList.remove('hidden');
+    applyReaderSettings();
+
+    if (Number.isFinite(Number(options.scrollPercent)) && Number(options.scrollPercent) > 0) {
+        restoreReaderScrollPercent(options.scrollPercent);
+    } else {
+        document.getElementById('reader-content').scrollTop = 0;
+        updateReaderViewportProgress();
+    }
+
+    if (!options.skipSave) {
+        scheduleSaveReadingProgress(0);
+    }
+}
+
 async function loadChapter(index, options = {}) {
     if (index < 0 || index >= readerState.chapters.length) return;
 
@@ -307,12 +387,10 @@ async function loadChapter(index, options = {}) {
         activeItem.scrollIntoView({ behavior: 'smooth', block: 'center' });
     }
 
-    document.getElementById('reader-loading').classList.remove('hidden');
-    document.getElementById('reader-text').classList.add('hidden');
-    document.getElementById('reader-empty').classList.add('hidden');
+    showReaderLoadingState();
 
     try {
-        const res = await api.get(`/api/novels/${readerState.novelId}/chapters/${index}`);
+        const res = await fetchReaderJson(`/api/novels/${readerState.novelId}/chapters/${index}`);
 
         if (res.success) {
             const chapter = res.data.chapter;
@@ -349,13 +427,11 @@ async function loadChapter(index, options = {}) {
                 scheduleSaveReadingProgress(0);
             }
         } else {
-            document.getElementById('reader-loading').classList.add('hidden');
-            document.getElementById('reader-empty').classList.remove('hidden');
+            showReaderEmptyState(res.message || '章节加载失败');
         }
     } catch (err) {
         console.error('加载章节失败:', err);
-        document.getElementById('reader-loading').classList.add('hidden');
-        document.getElementById('reader-empty').classList.remove('hidden');
+        showReaderEmptyState('章节加载失败: ' + err.message);
     }
 }
 

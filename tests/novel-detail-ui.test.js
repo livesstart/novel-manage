@@ -7,6 +7,19 @@ const template = fs.readFileSync(path.join(root, 'templates/index.html'), 'utf8'
 const novelsJs = fs.readFileSync(path.join(root, 'static/js/novels.js'), 'utf8');
 const novelsCss = fs.readFileSync(path.join(root, 'static/css/novels.css'), 'utf8');
 
+function readImportedCss() {
+    const cssDir = path.join(root, 'static/css');
+    const styleCss = fs.readFileSync(path.join(cssDir, 'style.css'), 'utf8');
+    const imports = [...styleCss.matchAll(/@import url\('\.\/([^']+)'\);/g)]
+        .map(match => match[1]);
+
+    return imports
+        .map(fileName => fs.readFileSync(path.join(cssDir, fileName), 'utf8'))
+        .join('\n');
+}
+
+const css = readImportedCss();
+
 const requiredTemplateIds = [
     'novel-detail-modal',
     'novel-detail-title',
@@ -47,5 +60,17 @@ assert.match(novelsCss, /\.novel-detail-hero/, 'detail hero area should be style
 assert.match(novelsCss, /\.novel-detail-metrics/, 'detail metrics should be styled');
 assert.match(novelsCss, /\.novel-detail-file-card/, 'file information card should be styled');
 assert.match(novelsCss, /\.novel-detail-status-pill/, 'file status pill should be styled');
+
+assert.match(
+    css,
+    /\.modal-content\s*\{[^}]*display:\s*flex;[^}]*flex-direction:\s*column;[^}]*max-height:\s*min\(90vh,\s*calc\(100vh - 32px\)\);/s,
+    'final modal styles should bound modal height and preserve a stable header/body/footer layout'
+);
+
+assert.match(
+    css,
+    /\.modal-body\s*\{[^}]*min-height:\s*0;[^}]*overflow-y:\s*auto;/s,
+    'modal body should scroll so long detail character analysis remains reachable'
+);
 
 console.log('novel detail UI checks passed');

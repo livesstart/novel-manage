@@ -7,10 +7,13 @@ const template = fs.readFileSync(path.join(root, 'templates/index.html'), 'utf8'
 const readerJs = fs.readFileSync(path.join(root, 'static/js/reader.js'), 'utf8');
 const appJs = fs.readFileSync(path.join(root, 'static/js/app.js'), 'utf8');
 const readerCss = fs.readFileSync(path.join(root, 'static/css/reader.css'), 'utf8');
+const overridesCss = fs.readFileSync(path.join(root, 'static/css/overrides.css'), 'utf8');
 
 assert.match(template, /id="reader-toc-toggle"/, 'reader should expose a table-of-contents toggle');
 assert.match(template, /id="reader-settings-toggle"/, 'reader should expose a settings toggle');
 assert.match(template, /id="reader-immersive-toggle"/, 'reader should expose an immersive mode toggle');
+assert.match(template, /id="reader-immersive-exit"/, 'reader should expose an immersive-mode exit control outside the hidden header');
+assert.match(template, /aria-label="退出沉浸阅读"/, 'reader immersive exit should be accessible after the header is hidden');
 assert.match(template, /id="reader-settings-panel"/, 'reader should render a settings panel');
 assert.match(template, /id="reader-theme-select"/, 'reader settings should include theme selection');
 assert.match(template, /id="reader-line-height"/, 'reader settings should include line height control');
@@ -19,6 +22,10 @@ assert.match(template, /id="reader-spacing"/, 'reader settings should include pa
 assert.match(template, /id="reader-progress-track"/, 'reader should render chapter progress track');
 assert.match(template, /id="reader-scroll-percent"/, 'reader should render chapter scroll percentage');
 
+const readerWidthControl = template.match(/<input type="range" id="reader-width"[^>]+>/)?.[0] || '';
+assert.match(readerWidthControl, /value="1000"/, 'reader width control should default to a wider comfortable line length');
+assert.match(readerWidthControl, /max="1280"/, 'reader width control should allow wider desktop reading');
+
 assert.match(readerJs, /READER_SETTINGS_STORAGE_KEY/, 'reader settings should have a stable localStorage key');
 assert.match(readerJs, /localStorage\.setItem\(READER_SETTINGS_STORAGE_KEY/, 'reader should persist reading preferences');
 assert.match(readerJs, /function applyReaderSettings/, 'reader should apply persisted reading preferences');
@@ -26,17 +33,33 @@ assert.match(readerJs, /function updateReaderViewportProgress/, 'reader should u
 assert.match(readerJs, /function scrollReaderByPage/, 'reader should support page-wise keyboard scrolling');
 assert.match(readerJs, /function toggleReaderImmersiveMode/, 'reader should support immersive mode');
 assert.match(readerJs, /function toggleReaderToc/, 'reader should support table-of-contents toggle');
+assert.match(readerJs, /READER_REQUEST_TIMEOUT_MS/, 'reader requests should have a timeout guard');
+assert.match(readerJs, /AbortController/, 'reader requests should abort instead of loading forever');
+assert.match(readerJs, /function fetchReaderJson/, 'reader should use a dedicated fetch helper');
+assert.match(readerJs, /function renderReaderChapter/, 'reader should render an already available chapter without refetching');
+assert.match(readerJs, /data\.initial_chapter/, 'reader should use the initial chapter returned by the read API');
+assert.match(readerJs, /function showReaderEmptyState/, 'reader should leave loading state for empty or failed reads');
+assert.match(readerJs, /width:\s*1000/, 'reader should default to a wider content width');
+assert.match(readerJs, /width:\s*clampReaderNumber\(settings\.width,\s*620,\s*1280,/, 'reader width preference should clamp to the expanded desktop range');
 
 assert.match(appJs, /reader-settings-toggle'\)\.addEventListener\('click',\s*toggleReaderSettingsPanel\)/, 'app should bind settings toggle');
 assert.match(appJs, /reader-immersive-toggle'\)\.addEventListener\('click',\s*toggleReaderImmersiveMode\)/, 'app should bind immersive toggle');
+assert.match(appJs, /reader-immersive-exit'\)\.addEventListener\('click',\s*\(\)\s*=>\s*setReaderImmersiveMode\(false\)\)/, 'immersive exit control should leave immersive mode without closing the reader');
 assert.match(appJs, /reader-toc-toggle'\)\.addEventListener\('click',\s*toggleReaderToc\)/, 'app should bind TOC toggle');
 assert.match(appJs, /scrollReaderByPage\(1\)/, 'keyboard shortcuts should scroll down by page');
 assert.match(appJs, /scrollReaderByPage\(-1\)/, 'keyboard shortcuts should scroll up by page');
+assert.match(appJs, /if \(e\.key === 'Escape'\) {[\s\S]*readerState\.isImmersive[\s\S]*setReaderImmersiveMode\(false\);[\s\S]*return;[\s\S]*}\s*if \(\['INPUT', 'TEXTAREA', 'SELECT', 'BUTTON'\]\.includes\(e\.target\.tagName\)\) return;/, 'Escape should exit immersive mode before focused controls suppress reader shortcuts');
 
 assert.match(readerCss, /\.reader-settings-panel/, 'reader settings panel should be styled');
+assert.match(readerCss, /\.reader-immersive-exit\s*{[^}]*display:\s*none/s, 'immersive exit control should be hidden outside immersive mode');
+assert.match(readerCss, /\.reader-modal\.immersive\s+\.reader-immersive-exit\s*{[^}]*display:\s*inline-flex/s, 'immersive exit control should be visible while immersive mode hides the header');
+assert.match(readerCss, /grid-template-columns:\s*repeat\(auto-fit,\s*minmax\(170px,\s*1fr\)\)/, 'reader settings should wrap instead of clipping in narrower main panes');
+assert.match(readerCss, /overflow-x:\s*hidden/, 'reader settings panel should prevent horizontal clipping/overflow');
+assert.match(readerCss, /max-width:\s*1000px/, 'reader text should start with the wider default measure');
 assert.match(readerCss, /\.reader-progress-track/, 'reader progress track should be styled');
 assert.match(readerCss, /\.reader-modal\.theme-sepia/, 'reader should include a sepia theme');
 assert.match(readerCss, /\.reader-modal\.theme-green/, 'reader should include an eye-care theme');
 assert.match(readerCss, /\.reader-modal\.immersive/, 'reader should include immersive layout styles');
+assert.match(overridesCss, /\.reader-modal\s+\.reader-content\s*{[^}]*max-width:\s*100vw/s, 'reader modal should override generic modal max-width and stay full viewport');
 
 console.log('reader experience UI checks passed');

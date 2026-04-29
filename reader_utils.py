@@ -1,73 +1,76 @@
-"""Reader helpers for text encoding and chapter parsing."""
+"""Reader helpers for text encoding, chapter parsing, and parsed file caching."""
+import io
+import os
 import re
+from collections import OrderedDict
 
 
-# 章节识别正则表达式模式
 CHAPTER_PATTERNS = [
-    # 第X章/回/节/集/卷
     r'^(第[\s]*[零一二三四五六七八九十百千万\d]+[\s]*[章回节集卷])',
-    # Chapter X / CHAPTER X
-    r'^(Chapter[\s]+\d+)',  # 英文章节
-    # 数字开头 + 章节名
+    r'^(Chapter[\s]+\d+)',
     r'^(\d+[\.\s、]+[^\n]+)',
-    # 第X章：标题
     r'^(第[\s]*[零一二三四五六七八九十百千万\d]+[\s]*[章回节集卷][：:].+)',
-    # 【第X章】
     r'^[【\[](第[\s]*[零一二三四五六七八九十百千万\d]+[\s]*[章回节集卷])[】\]]',
 ]
 
+CHAPTER_REGEX = re.compile('|'.join(f'({pattern})' for pattern in CHAPTER_PATTERNS), re.IGNORECASE)
+ENCODING_SAMPLE_SIZE = 256 * 1024
+READER_FILE_CACHE_MAX_ITEMS = 6
+_READER_FILE_CACHE = OrderedDict()
 
-def detect_encoding(file_path):
-    """检测文件编码"""
+
+def detect_encoding(file_path, sample_size=ENCODING_SAMPLE_SIZE):
+    """Detect the likely text encoding from a bounded byte sample."""
     import chardet
-    with open(file_path, 'rb') as f:
-        raw_data = f.read()
-        result = chardet.detect(raw_data)
-        return result['encoding'] or 'utf-8'
+    with open(file_path, 'rb') as handle:
+        raw_data = handle.read(sample_size)
+
+    if not raw_data:
+        return 'utf-8'
+
+    if raw_data.startswith(b'\xef\xbb\xbf'):
+        return 'utf-8-sig'
+
+    try:
+        raw_data.decode('utf-8')
+        return 'utf-8'
+    except UnicodeDecodeError:
+        pass
+
+    result = chardet.detect(raw_data)
+    return result['encoding'] or 'utf-8'
 
 
 def parse_chapters(content):
-    """解析章节"""
+    """Parse text into chapters while avoiding repeated regex compilation."""
     chapters = []
-    lines = content.split('\n')
-
-    # 合并所有模式
-    combined_pattern = '|'.join(f'({p})' for p in CHAPTER_PATTERNS)
-    chapter_regex = re.compile(combined_pattern, re.IGNORECASE)
-
     current_chapter = None
     current_content = []
 
-    for line_num, line in enumerate(lines):
+    for line_num, line in enumerate(io.StringIO(content)):
         line = line.strip()
         if not line:
             continue
 
-        # 检查是否是章节标题
-        match = chapter_regex.match(line)
+        match = CHAPTER_REGEX.match(line)
         if match:
-            # 保存上一章节
             if current_chapter:
                 current_chapter['content'] = '\n'.join(current_content)
                 chapters.append(current_chapter)
 
-            # 开始新章节
             current_chapter = {
                 'title': line,
                 'content': '',
                 'line_num': line_num
             }
             current_content = []
-        else:
-            if current_chapter:
-                current_content.append(line)
+        elif current_chapter:
+            current_content.append(line)
 
-    # 保存最后一章
     if current_chapter:
         current_chapter['content'] = '\n'.join(current_content)
         chapters.append(current_chapter)
 
-    # 如果没有识别到章节，将全文作为一章
     if not chapters and content.strip():
         chapters = [{
             'title': '全文',
@@ -76,3 +79,47 @@ def parse_chapters(content):
         }]
 
     return chapters
+
+
+def _reader_file_signature(file_path):
+    stat_result = os.stat(file_path)
+    return (
+        os.path.abspath(file_path),
+        stat_result.st_size,
+        getattr(stat_result, 'st_mtime_ns', int(stat_result.st_mtime * 1_000_000_000)),
+    )
+
+
+def clear_reader_file_cache():
+    """Clear parsed reader file cache. Intended for tests and explicit maintenance."""
+    _READER_FILE_CACHE.clear()
+
+
+def get_cached_reader_file(file_path):
+    """Read and parse a text novel once, then reuse it until the file changes."""
+    signature = _reader_file_signature(file_path)
+    cache_key = signature[0]
+    cached = _READER_FILE_CACHE.get(cache_key)
+
+    if cached and cached.get('signature') == signature:
+        _READER_FILE_CACHE.move_to_end(cache_key)
+        return cached
+
+    encoding = detect_encoding(file_path)
+    with open(file_path, 'r', encoding=encoding, errors='ignore') as handle:
+        content = handle.read()
+
+    parsed = {
+        'signature': signature,
+        'encoding': encoding,
+        'total_chars': len(content),
+        'chapters': parse_chapters(content),
+    }
+
+    _READER_FILE_CACHE[cache_key] = parsed
+    _READER_FILE_CACHE.move_to_end(cache_key)
+
+    while len(_READER_FILE_CACHE) > READER_FILE_CACHE_MAX_ITEMS:
+        _READER_FILE_CACHE.popitem(last=False)
+
+    return parsed

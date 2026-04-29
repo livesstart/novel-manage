@@ -57,6 +57,8 @@ class ReaderProgressTest(unittest.TestCase):
         self.assertEqual(payload['data']['reading_progress']['chapter_index'], 1)
         self.assertEqual(payload['data']['reading_progress']['scroll_percent'], 42.5)
         self.assertIsNotNone(payload['data']['reading_progress']['last_read_at'])
+        self.assertEqual(payload['data']['initial_chapter']['index'], 1)
+        self.assertIn('这里是中段正文', payload['data']['initial_chapter']['content'])
 
     def test_save_progress_clamps_values_to_available_range(self):
         response = self.client.put(

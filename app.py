@@ -258,7 +258,7 @@ def get_novels():
 
 
 # ==================== Reader routes ====================
-from reader_utils import detect_encoding, parse_chapters
+from reader_utils import detect_encoding, get_cached_reader_file, parse_chapters
 
 
 def _serialize_reading_progress(novel, chapter_count=None):
@@ -330,20 +330,29 @@ def read_novel(novel_id):
         }), 400
 
     try:
-        encoding = detect_encoding(actual_path)
-        with open(actual_path, 'r', encoding=encoding, errors='ignore') as f:
-            content = f.read()
-
-        chapters = parse_chapters(content)
+        reader_file = get_cached_reader_file(actual_path)
+        chapters = reader_file['chapters']
+        reading_progress = _serialize_reading_progress(novel, len(chapters))
+        initial_chapter = None
+        if chapters:
+            initial_index = reading_progress['chapter_index']
+            chapter = chapters[initial_index]
+            initial_chapter = {
+                'index': initial_index,
+                'title': chapter['title'],
+                'content': chapter['content'],
+                'total_chapters': len(chapters)
+            }
 
         return jsonify({
             'success': True,
             'data': {
                 'novel': novel,
                 'chapters': [{'title': c['title'], 'line_num': c['line_num']} for c in chapters],
-                'reading_progress': _serialize_reading_progress(novel, len(chapters)),
-                'total_chars': len(content),
-                'encoding': encoding
+                'initial_chapter': initial_chapter,
+                'reading_progress': reading_progress,
+                'total_chars': reader_file['total_chars'],
+                'encoding': reader_file['encoding']
             }
         })
 
@@ -376,11 +385,7 @@ def get_chapter_content(novel_id, chapter_index):
         return jsonify({'success': False, 'message': '当前仅支持 TXT 文件在线阅读'}), 400
 
     try:
-        encoding = detect_encoding(actual_path)
-        with open(actual_path, 'r', encoding=encoding, errors='ignore') as f:
-            content = f.read()
-
-        chapters = parse_chapters(content)
+        chapters = get_cached_reader_file(actual_path)['chapters']
 
         if chapter_index < 0 or chapter_index >= len(chapters):
             return jsonify({'success': False, 'message': '章节不存在'}), 404
@@ -431,9 +436,7 @@ def update_reading_progress(novel_id):
     actual_path, _ = resolve_novel_file_path(file_path)
     if actual_path and is_text_readable_file(actual_path):
         try:
-            encoding = detect_encoding(actual_path)
-            with open(actual_path, 'r', encoding=encoding, errors='ignore') as handle:
-                chapter_count = max(len(parse_chapters(handle.read())), 1)
+            chapter_count = max(len(get_cached_reader_file(actual_path)['chapters']), 1)
         except Exception:
             chapter_count = 1
 

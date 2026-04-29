@@ -1124,6 +1124,9 @@
     <!-- 阅读器弹窗 -->
     <div class="modal reader-modal" id="reader-modal">
         <div class="modal-content reader-content">
+            <button class="btn-icon reader-immersive-exit" id="reader-immersive-exit" title="退出沉浸阅读" aria-label="退出沉浸阅读">
+                <i class="fas fa-compress"></i>
+            </button>
             <div class="reader-header">
                 <div class="reader-title-section">
                     <button class="btn-icon reader-mobile-control" id="reader-toc-toggle" title="章节目录" aria-pressed="false">
@@ -1186,8 +1189,8 @@
                             <input type="range" id="reader-line-height" min="1.4" max="2.4" step="0.1" value="1.9">
                         </label>
                         <label class="reader-setting-field">
-                            <span>宽度 <b id="reader-width-value">860</b></span>
-                            <input type="range" id="reader-width" min="620" max="1080" step="20" value="860">
+                            <span>宽度 <b id="reader-width-value">1000</b></span>
+                            <input type="range" id="reader-width" min="620" max="1280" step="20" value="1000">
                         </label>
                         <label class="reader-setting-field">
                             <span>段距 <b id="reader-spacing-value">1.0</b></span>

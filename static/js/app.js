@@ -334,12 +334,27 @@ function bindEvents() {
     document.getElementById('reader-spacing').addEventListener('input', updateReaderSettingsFromControls);
     document.getElementById('reader-settings-toggle').addEventListener('click', toggleReaderSettingsPanel);
     document.getElementById('reader-immersive-toggle').addEventListener('click', toggleReaderImmersiveMode);
+    document.getElementById('reader-immersive-exit').addEventListener('click', () => setReaderImmersiveMode(false));
     document.getElementById('reader-toc-toggle').addEventListener('click', toggleReaderToc);
 
     // 键盘快捷键
     document.addEventListener('keydown', (e) => {
         // 只在阅读器打开时生效
         if (!document.getElementById('reader-modal').classList.contains('active')) return;
+
+        if (e.key === 'Escape') {
+            if (readerState.isImmersive) {
+                setReaderImmersiveMode(false);
+                return;
+            }
+
+            if (!['INPUT', 'TEXTAREA', 'SELECT', 'BUTTON'].includes(e.target.tagName)) {
+                saveReadingProgressNow();
+                closeModal('reader-modal');
+            }
+            return;
+        }
+
         if (['INPUT', 'TEXTAREA', 'SELECT', 'BUTTON'].includes(e.target.tagName)) return;
 
         switch(e.key) {
@@ -359,10 +374,6 @@ function bindEvents() {
             case 'PageUp':
                 e.preventDefault();
                 scrollReaderByPage(-1);
-                break;
-            case 'Escape':
-                saveReadingProgressNow();
-                closeModal('reader-modal');
                 break;
         }
     });
