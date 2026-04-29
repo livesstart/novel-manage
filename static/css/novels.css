@@ -553,6 +553,199 @@
     background: #f8fafc;
 }
 
+.novel-character-panel {
+    margin-top: 20px;
+    padding: 16px;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius);
+    background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+}
+
+.novel-character-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 16px;
+    margin-bottom: 16px;
+}
+
+.novel-character-head h4 {
+    margin: 0 0 6px;
+    font-size: 15px;
+}
+
+.novel-character-head p {
+    margin: 0;
+    color: var(--text-secondary);
+    font-size: 13px;
+}
+
+.novel-character-head p.completed {
+    color: #047857;
+}
+
+.novel-character-head p.failed {
+    color: #b91c1c;
+}
+
+.novel-character-layout {
+    display: grid;
+    grid-template-columns: minmax(240px, 0.9fr) minmax(320px, 1.3fr);
+    gap: 16px;
+}
+
+.novel-character-column {
+    min-width: 0;
+}
+
+.novel-character-column-title {
+    margin-bottom: 10px;
+    color: var(--text-secondary);
+    font-size: 12px;
+    font-weight: 700;
+}
+
+.novel-character-list,
+.novel-character-relations {
+    display: grid;
+    gap: 10px;
+}
+
+.novel-character-card,
+.novel-relation-card {
+    padding: 12px;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius);
+    background: #ffffff;
+}
+
+.novel-character-card-head,
+.novel-relation-card-title {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 8px;
+}
+
+.novel-character-card-head strong,
+.novel-relation-card-title strong {
+    color: var(--text-primary);
+}
+
+.novel-character-card-head span,
+.novel-relation-card-title span {
+    padding: 3px 8px;
+    border-radius: 999px;
+    background: #eef2ff;
+    color: #3730a3;
+    font-size: 12px;
+    font-weight: 700;
+}
+
+.novel-character-card p,
+.novel-relation-card p {
+    margin: 0 0 8px;
+    color: var(--text-secondary);
+    line-height: 1.6;
+}
+
+.novel-character-alias,
+.novel-character-confidence {
+    color: var(--text-secondary);
+    font-size: 12px;
+}
+
+.novel-character-badges {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin: 8px 0;
+}
+
+.novel-character-badges span {
+    padding: 3px 8px;
+    border-radius: 999px;
+    background: #ecfeff;
+    color: #0e7490;
+    font-size: 12px;
+}
+
+.novel-character-evidence {
+    margin: 8px 0;
+    padding: 8px 10px;
+    border-left: 3px solid #a5b4fc;
+    border-radius: 0 var(--radius) var(--radius) 0;
+    background: #f8fafc;
+    color: var(--text-secondary);
+    font-size: 12px;
+    line-height: 1.5;
+}
+
+.novel-character-graph {
+    min-height: 260px;
+    margin-bottom: 12px;
+    border: 1px dashed var(--border-color);
+    border-radius: var(--radius);
+    background: #ffffff;
+    overflow: hidden;
+}
+
+.novel-character-graph svg {
+    display: block;
+    width: 100%;
+    min-height: 260px;
+}
+
+.novel-relation-line {
+    stroke: #94a3b8;
+    stroke-width: 2;
+}
+
+.novel-relation-label {
+    fill: #475569;
+    font-size: 12px;
+    font-weight: 700;
+    paint-order: stroke;
+    stroke: #ffffff;
+    stroke-width: 4px;
+    stroke-linejoin: round;
+}
+
+.novel-character-node circle {
+    fill: #eef2ff;
+    stroke: #6366f1;
+    stroke-width: 2;
+}
+
+.novel-character-node-name {
+    fill: #312e81;
+    font-size: 14px;
+    font-weight: 800;
+}
+
+.novel-character-node-role {
+    fill: #64748b;
+    font-size: 11px;
+}
+
+.novel-character-empty {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 120px;
+    padding: 16px;
+    border: 1px dashed var(--border-color);
+    border-radius: var(--radius);
+    color: var(--text-secondary);
+    background: #ffffff;
+    text-align: center;
+}
+
+.novel-character-empty.compact {
+    min-height: 64px;
+}
+
 @media (max-width: 768px) {
     .novel-detail-hero {
         grid-template-columns: 72px 1fr;
@@ -571,6 +764,10 @@
     .novel-detail-metrics,
     .novel-detail-file-grid {
         grid-template-columns: 1fr 1fr;
+    }
+
+    .novel-character-layout {
+        grid-template-columns: 1fr;
     }
 
     .novel-detail-file-head {

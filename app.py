@@ -160,6 +160,7 @@ def init_db():
     _ensure_crawler_site_rule_schema(cursor)
     _seed_default_crawler_site_rules(cursor)
     _recover_interrupted_crawler_tasks(cursor)
+    ensure_character_analysis_schema(cursor)
 
     conn.commit()
     conn.close()
@@ -1057,7 +1058,7 @@ def check_novel_file(novel_id):
 
 
 # ==================== AI 配置 API ====================
-from ai_routes import register_ai_routes
+from ai_routes import ensure_character_analysis_schema, register_ai_routes
 from crawler_routes import (
     _ensure_crawler_site_rule_schema,
     _ensure_crawler_task_schema,

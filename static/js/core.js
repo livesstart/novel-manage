@@ -15,6 +15,7 @@ const state = {
     filterTagsExpanded: false,
     editingNovel: null,
     detailNovel: null,
+    detailCharacterAnalysis: null,
     editingCategory: null,
     editingTag: null,
     importStep: 1,

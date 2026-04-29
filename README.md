@@ -12,7 +12,7 @@
 - 分类与标签：支持自定义分类、彩色标签、多标签筛选、仅看无标签小说。
 - 批量操作：支持批量添加标签、设置分类、设置阅读状态、删除小说和批量 AI 生成简介/标签。
 - 批量导入：支持选择本地文件夹扫描小说文件，并按文件夹自动推断分类。
-- AI 配置：支持配置 OpenAI、Anthropic、Gemini 兼容接口，测试连接，并用于小说简介和标签生成。
+- AI 配置：支持配置 OpenAI、Anthropic、Gemini 兼容接口，测试连接，并用于小说简介、标签、角色和角色关系生成。
 - 爬虫管理：支持创建抓取任务、站点规则、列表页批量建任务、任务重试、任务恢复和抓取结果入库。
 - 本地优先：数据库和上传文件默认保存在项目本地，方便备份和迁移。
 
@@ -107,7 +107,7 @@ http://localhost:5000
 
 ### 小说列表
 
-进入首页后可以搜索小说名或作者，并按分类、标签、阅读状态筛选。搜索框右侧开启“全文”后，会对可在线阅读的 TXT 正文和章节进行全文搜索，结果会展示命中小说、章节和摘要，点击可直接打开对应章节。卡片上提供详情、阅读、下载、编辑和删除操作；详情页会集中展示简介、标签、阅读进度、最近阅读时间、章节数、字数、文件路径、文件大小和文件检查状态。左上角圆形勾选控件用于批量操作。打开 TXT 小说阅读时会自动恢复到上次阅读的章节和滚动位置，阅读器支持主题、字号、行高、正文宽度、段落间距、目录收起和沉浸模式。
+进入首页后可以搜索小说名或作者，并按分类、标签、阅读状态筛选。搜索框右侧开启“全文”后，会对可在线阅读的 TXT 正文和章节进行全文搜索，结果会展示命中小说、章节和摘要，点击可直接打开对应章节。卡片上提供详情、阅读、下载、编辑和删除操作；详情页会集中展示简介、标签、阅读进度、最近阅读时间、章节数、字数、文件路径、文件大小、文件检查状态、AI 角色分析和角色关系谱。左上角圆形勾选控件用于批量操作。打开 TXT 小说阅读时会自动恢复到上次阅读的章节和滚动位置，阅读器支持主题、字号、行高、正文宽度、段落间距、目录收起和沉浸模式。
 
 ### 添加小说
 
@@ -131,6 +131,7 @@ http://localhost:5000
 
 - 测试 AI 对话连接。
 - 在单本小说编辑时生成简介和标签。
+- 在单本小说详情页分析角色、角色别名、身份定位、特征、证据片段和角色关系谱。
 - 对已勾选的多本小说批量生成简介和标签，并逐本确认后写回数据库。
 
 API Key 等敏感配置只保存在本地数据库中，请自行做好本地备份和权限管理。
@@ -205,10 +206,12 @@ node tests/frontend-css-split.test.js
 node tests/novel-detail-ui.test.js
 node tests/reader-experience-ui.test.js
 node tests/full-text-search-ui.test.js
+node tests/character-analysis-ui.test.js
 node tests/novels-view-hero.test.js
 node tests/novel-card-ui.test.js
 python tests/app_structure.test.py
 python tests/full_text_search.test.py
+python tests/character_analysis.test.py
 python tests/novel_detail_file.test.py
 ```
 
@@ -223,10 +226,12 @@ node tests/frontend-css-split.test.js
 node tests/novel-detail-ui.test.js
 node tests/reader-experience-ui.test.js
 node tests/full-text-search-ui.test.js
+node tests/character-analysis-ui.test.js
 node tests/novels-view-hero.test.js
 node tests/novel-card-ui.test.js
 python tests/app_structure.test.py
 python tests/full_text_search.test.py
+python tests/character_analysis.test.py
 python tests/novel_detail_file.test.py
 git diff --check
 ```

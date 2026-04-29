@@ -705,6 +705,12 @@ function formatNumber(value) {
     return number.toLocaleString('zh-CN');
 }
 
+function formatConfidence(value) {
+    const number = Number(value);
+    if (!Number.isFinite(number) || number <= 0) return '--';
+    return `${Math.round(Math.max(0, Math.min(number, 1)) * 100)}%`;
+}
+
 function renderNovelDetailTags(tags = []) {
     const container = document.getElementById('novel-detail-tags');
     if (!Array.isArray(tags) || tags.length === 0) {
@@ -717,6 +723,178 @@ function renderNovelDetailTags(tags = []) {
             ${escapeHtml(tag.name)}
         </span>
     `).join('');
+}
+
+function resetNovelCharacterAnalysis() {
+    state.detailCharacterAnalysis = null;
+    document.getElementById('novel-character-status').textContent = '尚未分析';
+    document.getElementById('novel-character-status').className = '';
+    document.getElementById('novel-character-list').innerHTML = '<div class="novel-character-empty">暂无角色数据</div>';
+    document.getElementById('novel-character-graph').innerHTML = '<div class="novel-character-empty">分析后会生成关系图</div>';
+    document.getElementById('novel-character-relations').innerHTML = '';
+}
+
+function renderCharacterBadges(items = []) {
+    if (!Array.isArray(items) || items.length === 0) return '';
+    return `
+        <div class="novel-character-badges">
+            ${items.map(item => `<span>${escapeHtml(item)}</span>`).join('')}
+        </div>
+    `;
+}
+
+function renderCharacterRelationshipGraph(characters = [], relations = []) {
+    const graph = document.getElementById('novel-character-graph');
+    if (!Array.isArray(characters) || characters.length === 0) {
+        graph.innerHTML = '<div class="novel-character-empty">暂无角色数据</div>';
+        return;
+    }
+
+    const width = 520;
+    const height = 320;
+    const centerX = width / 2;
+    const centerY = height / 2;
+    const radius = characters.length === 1 ? 0 : 112;
+    const nodePositions = new Map();
+
+    characters.forEach((character, index) => {
+        const angle = characters.length === 1 ? 0 : (Math.PI * 2 * index) / characters.length - Math.PI / 2;
+        nodePositions.set(character.id, {
+            x: centerX + Math.cos(angle) * radius,
+            y: centerY + Math.sin(angle) * radius
+        });
+    });
+
+    const relationLines = (relations || [])
+        .map(relation => {
+            const source = nodePositions.get(relation.source_character_id);
+            const target = nodePositions.get(relation.target_character_id);
+            if (!source || !target) return '';
+            const midX = (source.x + target.x) / 2;
+            const midY = (source.y + target.y) / 2;
+            return `
+                <line x1="${source.x}" y1="${source.y}" x2="${target.x}" y2="${target.y}" class="novel-relation-line"></line>
+                <text x="${midX}" y="${midY - 6}" class="novel-relation-label">${escapeHtml(relation.relation_type || '相关')}</text>
+            `;
+        })
+        .join('');
+
+    const nodes = characters.map(character => {
+        const position = nodePositions.get(character.id);
+        const initials = String(character.name || '?').slice(0, 2);
+        return `
+            <g class="novel-character-node" transform="translate(${position.x}, ${position.y})">
+                <circle r="34"></circle>
+                <text class="novel-character-node-name" text-anchor="middle" y="5">${escapeHtml(initials)}</text>
+                <text class="novel-character-node-role" text-anchor="middle" y="52">${escapeHtml(character.role_type || '角色')}</text>
+            </g>
+        `;
+    }).join('');
+
+    graph.innerHTML = `
+        <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="角色关系谱">
+            ${relationLines}
+            ${nodes}
+        </svg>
+    `;
+}
+
+function renderNovelCharacterAnalysis(analysis) {
+    state.detailCharacterAnalysis = analysis;
+    const characters = Array.isArray(analysis?.characters) ? analysis.characters : [];
+    const relations = Array.isArray(analysis?.relations) ? analysis.relations : [];
+    const status = analysis?.analysis_status || 'empty';
+    const statusEl = document.getElementById('novel-character-status');
+
+    if (status === 'failed') {
+        statusEl.textContent = analysis.error_message || '上次分析失败';
+        statusEl.className = 'failed';
+    } else if (characters.length > 0 || relations.length > 0) {
+        statusEl.textContent = `已识别 ${characters.length} 个角色、${relations.length} 条关系`;
+        statusEl.className = 'completed';
+    } else {
+        statusEl.textContent = '尚未分析';
+        statusEl.className = '';
+    }
+
+    const list = document.getElementById('novel-character-list');
+    if (characters.length === 0) {
+        list.innerHTML = '<div class="novel-character-empty">暂无角色数据</div>';
+    } else {
+        list.innerHTML = characters.map(character => `
+            <article class="novel-character-card">
+                <div class="novel-character-card-head">
+                    <strong>${escapeHtml(character.name)}</strong>
+                    <span>${escapeHtml(character.role_type || '角色')}</span>
+                </div>
+                ${character.aliases?.length ? `<div class="novel-character-alias">别名：${escapeHtml(character.aliases.join('、'))}</div>` : ''}
+                <p>${escapeHtml(character.description || '暂无说明')}</p>
+                ${renderCharacterBadges(character.traits)}
+                <div class="novel-character-evidence">${escapeHtml(character.evidence || '暂无证据片段')}</div>
+                <div class="novel-character-confidence">可信度 ${formatConfidence(character.confidence)}</div>
+            </article>
+        `).join('');
+    }
+
+    renderCharacterRelationshipGraph(characters, relations);
+
+    const relationList = document.getElementById('novel-character-relations');
+    if (relations.length === 0) {
+        relationList.innerHTML = '<div class="novel-character-empty compact">暂无关系数据</div>';
+    } else {
+        relationList.innerHTML = relations.map(relation => `
+            <article class="novel-relation-card">
+                <div class="novel-relation-card-title">
+                    <strong>${escapeHtml(relation.source_name)}</strong>
+                    <span>${escapeHtml(relation.relation_type || '相关')}</span>
+                    <strong>${escapeHtml(relation.target_name)}</strong>
+                </div>
+                <p>${escapeHtml(relation.description || '暂无说明')}</p>
+                <div class="novel-character-evidence">${escapeHtml(relation.evidence || '暂无证据片段')}</div>
+                <div class="novel-character-confidence">可信度 ${formatConfidence(relation.confidence)}</div>
+            </article>
+        `).join('');
+    }
+}
+
+async function loadNovelCharacterAnalysis(novelId) {
+    try {
+        const res = await api.get(`/api/novels/${novelId}/characters`);
+        if (!res.success) {
+            document.getElementById('novel-character-status').textContent = res.message || '角色数据加载失败';
+            return;
+        }
+        renderNovelCharacterAnalysis(res.data);
+    } catch (err) {
+        console.warn('加载角色关系分析失败:', err);
+        document.getElementById('novel-character-status').textContent = '角色数据加载失败';
+    }
+}
+
+async function analyzeNovelCharactersWithAI(novelId) {
+    const button = document.getElementById('btn-detail-analyze-characters');
+    const originalHtml = button.innerHTML;
+    button.disabled = true;
+    button.innerHTML = '<span class="loading"></span> 分析中';
+    document.getElementById('novel-character-status').textContent = 'AI 正在分析角色关系...';
+
+    try {
+        const res = await api.post(`/api/ai/novels/${novelId}/characters/analyze`, {});
+        if (!res.success) {
+            showToast(res.message || '角色分析失败', 'error');
+            await loadNovelCharacterAnalysis(novelId);
+            return;
+        }
+
+        renderNovelCharacterAnalysis(res.data);
+        showToast(`已识别 ${res.data.character_count} 个角色、${res.data.relation_count} 条关系`, 'success');
+    } catch (err) {
+        console.error('AI 分析角色关系失败:', err);
+        showToast('AI 分析角色关系失败: ' + err.message, 'error');
+    } finally {
+        button.disabled = false;
+        button.innerHTML = originalHtml;
+    }
 }
 
 function calculateNovelReadingPercent(readingProgress, chapterCount) {
@@ -749,6 +927,7 @@ function renderNovelDetail(novel) {
     fileStatus.className = 'novel-detail-status-pill checking';
     fileStatus.textContent = '检查中';
 
+    resetNovelCharacterAnalysis();
     renderNovelDetailTags(novel.tags);
 
     document.getElementById('btn-detail-read').onclick = () => openNovelFile(novel.id);
@@ -758,6 +937,7 @@ function renderNovelDetail(novel) {
         editNovel(novel.id);
     };
     document.getElementById('btn-detail-check-file').onclick = () => loadNovelDetailFileInfo(novel.id);
+    document.getElementById('btn-detail-analyze-characters').onclick = () => analyzeNovelCharactersWithAI(novel.id);
 }
 
 async function loadNovelDetailFileInfo(novelId) {
@@ -809,6 +989,7 @@ async function openNovelDetail(novelId) {
         renderNovelDetail(cachedNovel);
         openModal('novel-detail-modal');
         loadNovelDetailFileInfo(novelId);
+        loadNovelCharacterAnalysis(novelId);
         return;
     }
 
@@ -822,6 +1003,7 @@ async function openNovelDetail(novelId) {
         renderNovelDetail(res.data);
         openModal('novel-detail-modal');
         loadNovelDetailFileInfo(novelId);
+        loadNovelCharacterAnalysis(novelId);
     } catch (err) {
         console.error('加载小说详情失败:', err);
         showToast('加载小说详情失败: ' + err.message, 'error');

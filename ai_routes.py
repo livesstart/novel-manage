@@ -15,6 +15,64 @@ from ai_client import (
 )
 
 
+def ensure_character_analysis_schema(cursor):
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS novel_character_analysis_runs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            novel_id INTEGER NOT NULL UNIQUE,
+            status TEXT DEFAULT 'pending',
+            model TEXT,
+            character_count INTEGER DEFAULT 0,
+            relation_count INTEGER DEFAULT 0,
+            source_excerpt_chars INTEGER DEFAULT 0,
+            error_message TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            finished_at TIMESTAMP,
+            FOREIGN KEY (novel_id) REFERENCES novels(id) ON DELETE CASCADE
+        )
+    ''')
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS novel_characters (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            novel_id INTEGER NOT NULL,
+            name TEXT NOT NULL,
+            aliases_json TEXT DEFAULT '[]',
+            role_type TEXT,
+            description TEXT,
+            traits_json TEXT DEFAULT '[]',
+            first_chapter_index INTEGER,
+            evidence TEXT,
+            confidence REAL DEFAULT 0,
+            sort_order INTEGER DEFAULT 0,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE (novel_id, name),
+            FOREIGN KEY (novel_id) REFERENCES novels(id) ON DELETE CASCADE
+        )
+    ''')
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS novel_character_relations (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            novel_id INTEGER NOT NULL,
+            source_character_id INTEGER NOT NULL,
+            target_character_id INTEGER NOT NULL,
+            relation_type TEXT,
+            description TEXT,
+            evidence TEXT,
+            confidence REAL DEFAULT 0,
+            sort_order INTEGER DEFAULT 0,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (novel_id) REFERENCES novels(id) ON DELETE CASCADE,
+            FOREIGN KEY (source_character_id) REFERENCES novel_characters(id) ON DELETE CASCADE,
+            FOREIGN KEY (target_character_id) REFERENCES novel_characters(id) ON DELETE CASCADE
+        )
+    ''')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_novel_characters_novel ON novel_characters(novel_id, sort_order)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_novel_relations_novel ON novel_character_relations(novel_id, sort_order)')
+
+
 def register_ai_routes(app, *, get_db, resolve_novel_file_path, is_text_readable_file, detect_encoding):
     AI_TAG_COLOR_PALETTE = [
         '#6366f1', '#8b5cf6', '#06b6d4', '#14b8a6',
@@ -122,6 +180,316 @@ def register_ai_routes(app, *, get_db, resolve_novel_file_path, is_text_readable
             if match:
                 return json.loads(match.group(0))
             raise ValueError('AI 返回格式无法解析，请稍后重试')
+
+
+    def parse_json_list(value):
+        if not value:
+            return []
+        try:
+            loaded = json.loads(value)
+            return loaded if isinstance(loaded, list) else []
+        except (TypeError, json.JSONDecodeError):
+            return []
+
+
+    def clamp_confidence(value):
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            return 0
+        return max(0, min(number, 1))
+
+
+    def normalize_short_text(value, max_length=160):
+        text = re.sub(r'\s+', ' ', str(value or '')).strip()
+        return text[:max_length].strip()
+
+
+    def normalize_string_list(value, *, max_items=6, max_length=24):
+        if isinstance(value, str):
+            candidates = re.split(r'[,，、/\n]+', value)
+        elif isinstance(value, list):
+            candidates = value
+        else:
+            candidates = []
+
+        normalized = []
+        seen = set()
+        for item in candidates:
+            text = normalize_short_text(item, max_length=max_length)
+            text = re.sub(r'^[#\s\-\*\.]+|[#\s\-\*\.]+$', '', text).strip()
+            if len(text) < 2:
+                continue
+            key = text.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            normalized.append(text)
+            if len(normalized) >= max_items:
+                break
+
+        return normalized
+
+
+    def normalize_character_analysis_payload(payload):
+        raw_characters = payload.get('characters') if isinstance(payload, dict) else []
+        raw_relations = payload.get('relations') if isinstance(payload, dict) else []
+        characters = []
+        name_map = {}
+
+        for item in raw_characters or []:
+            if not isinstance(item, dict):
+                continue
+            name = normalize_short_text(item.get('name'), max_length=32)
+            if not name:
+                continue
+            key = name.lower()
+            if key in name_map:
+                continue
+
+            try:
+                first_chapter_index = int(item.get('first_chapter_index'))
+            except (TypeError, ValueError):
+                first_chapter_index = None
+
+            character = {
+                'name': name,
+                'aliases': normalize_string_list(item.get('aliases'), max_items=6, max_length=24),
+                'role_type': normalize_short_text(item.get('role_type'), max_length=32),
+                'description': normalize_short_text(item.get('description'), max_length=260),
+                'traits': normalize_string_list(item.get('traits'), max_items=8, max_length=18),
+                'first_chapter_index': first_chapter_index if first_chapter_index is None or first_chapter_index >= 0 else None,
+                'evidence': normalize_short_text(item.get('evidence'), max_length=220),
+                'confidence': clamp_confidence(item.get('confidence')),
+            }
+            name_map[key] = character
+            characters.append(character)
+            if len(characters) >= 24:
+                break
+
+        relations = []
+        relation_keys = set()
+        for item in raw_relations or []:
+            if not isinstance(item, dict):
+                continue
+            source_name = normalize_short_text(item.get('source') or item.get('source_name'), max_length=32)
+            target_name = normalize_short_text(item.get('target') or item.get('target_name'), max_length=32)
+            source_key = source_name.lower()
+            target_key = target_name.lower()
+            if not source_key or not target_key or source_key == target_key:
+                continue
+            if source_key not in name_map or target_key not in name_map:
+                continue
+
+            relation_type = normalize_short_text(item.get('relation_type') or item.get('type'), max_length=32)
+            relation_key = (source_key, target_key, relation_type.lower())
+            if relation_key in relation_keys:
+                continue
+            relation_keys.add(relation_key)
+
+            relations.append({
+                'source_name': name_map[source_key]['name'],
+                'target_name': name_map[target_key]['name'],
+                'relation_type': relation_type or '相关',
+                'description': normalize_short_text(item.get('description'), max_length=260),
+                'evidence': normalize_short_text(item.get('evidence'), max_length=220),
+                'confidence': clamp_confidence(item.get('confidence')),
+            })
+            if len(relations) >= 40:
+                break
+
+        return characters, relations
+
+
+    def build_character_analysis_messages(novel, content_excerpt):
+        context_blocks = [
+            f'标题：{novel.get("title") or "未提供"}',
+            f'作者：{novel.get("author") or "未提供"}',
+            f'简介：{novel.get("description") or "无"}',
+        ]
+        if content_excerpt:
+            context_blocks.append(f'正文片段：\n{content_excerpt[:12000]}')
+
+        user_prompt = '\n\n'.join(context_blocks) + textwrap.dedent("""
+
+    请分析这本小说中已经明确出现或被文本直接支持的角色，以及角色之间的关系。
+
+    要求：
+    1. 只输出一个 JSON 对象，不要输出 Markdown。
+    2. JSON 格式必须为：
+       {"characters":[{"name":"角色名","aliases":["别名"],"role_type":"主角/反派/同伴/配角/未知","description":"角色说明","traits":["特征"],"first_chapter_index":0,"evidence":"证据片段","confidence":0.8}],"relations":[{"source":"角色A","target":"角色B","relation_type":"关系类型","description":"关系说明","evidence":"证据片段","confidence":0.8}]}
+    3. 只基于已提供文本判断，不要编造未出现的人物、关系和结局。
+    4. characters 最多 12 个，relations 最多 20 条。
+    5. evidence 必须是能支持判断的简短文本依据。
+    6. confidence 用 0 到 1 的数字表示可信度。
+    """)
+
+        return [
+            {
+                'role': 'system',
+                'content': '你是一个严谨的小说人物关系分析助手，只根据文本证据整理人物和关系。'
+            },
+            {
+                'role': 'user',
+                'content': user_prompt.strip()
+            }
+        ]
+
+
+    def serialize_character_analysis(novel_id):
+        conn = get_db()
+        cursor = conn.cursor()
+
+        cursor.execute('''
+            SELECT *
+            FROM novel_character_analysis_runs
+            WHERE novel_id = ?
+        ''', (novel_id,))
+        run = cursor.fetchone()
+
+        cursor.execute('''
+            SELECT *
+            FROM novel_characters
+            WHERE novel_id = ?
+            ORDER BY sort_order ASC, id ASC
+        ''', (novel_id,))
+        characters = []
+        character_ids = set()
+        for row in cursor.fetchall():
+            item = dict(row)
+            character_ids.add(item['id'])
+            item['aliases'] = parse_json_list(item.pop('aliases_json', '[]'))
+            item['traits'] = parse_json_list(item.pop('traits_json', '[]'))
+            characters.append(item)
+
+        cursor.execute('''
+            SELECT r.*,
+                   sc.name AS source_name,
+                   tc.name AS target_name
+            FROM novel_character_relations r
+            JOIN novel_characters sc ON r.source_character_id = sc.id
+            JOIN novel_characters tc ON r.target_character_id = tc.id
+            WHERE r.novel_id = ?
+            ORDER BY r.sort_order ASC, r.id ASC
+        ''', (novel_id,))
+        relations = [dict(row) for row in cursor.fetchall()]
+        conn.close()
+
+        run_data = dict(run) if run else None
+        status = (run_data or {}).get('status') or ('completed' if characters or relations else 'empty')
+        return {
+            'novel_id': novel_id,
+            'analysis_status': status,
+            'analyzed_at': (run_data or {}).get('finished_at') or (run_data or {}).get('updated_at'),
+            'error_message': (run_data or {}).get('error_message'),
+            'character_count': len(characters),
+            'relation_count': len(relations),
+            'characters': characters,
+            'relations': relations,
+        }
+
+
+    def replace_character_analysis(novel_id, characters, relations, *, model='', source_excerpt_chars=0):
+        conn = get_db()
+        cursor = conn.cursor()
+
+        try:
+            cursor.execute('DELETE FROM novel_character_relations WHERE novel_id = ?', (novel_id,))
+            cursor.execute('DELETE FROM novel_characters WHERE novel_id = ?', (novel_id,))
+
+            character_id_by_name = {}
+            for index, character in enumerate(characters):
+                cursor.execute('''
+                    INSERT INTO novel_characters (
+                        novel_id, name, aliases_json, role_type, description,
+                        traits_json, first_chapter_index, evidence, confidence, sort_order
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ''', (
+                    novel_id,
+                    character['name'],
+                    json.dumps(character['aliases'], ensure_ascii=False),
+                    character['role_type'],
+                    character['description'],
+                    json.dumps(character['traits'], ensure_ascii=False),
+                    character['first_chapter_index'],
+                    character['evidence'],
+                    character['confidence'],
+                    index,
+                ))
+                character_id_by_name[character['name'].lower()] = cursor.lastrowid
+
+            saved_relation_count = 0
+            for index, relation in enumerate(relations):
+                source_id = character_id_by_name.get(relation['source_name'].lower())
+                target_id = character_id_by_name.get(relation['target_name'].lower())
+                if not source_id or not target_id:
+                    continue
+
+                cursor.execute('''
+                    INSERT INTO novel_character_relations (
+                        novel_id, source_character_id, target_character_id,
+                        relation_type, description, evidence, confidence, sort_order
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ''', (
+                    novel_id,
+                    source_id,
+                    target_id,
+                    relation['relation_type'],
+                    relation['description'],
+                    relation['evidence'],
+                    relation['confidence'],
+                    index,
+                ))
+                saved_relation_count += 1
+
+            cursor.execute('''
+                INSERT INTO novel_character_analysis_runs (
+                    novel_id, status, model, character_count, relation_count,
+                    source_excerpt_chars, error_message, updated_at, finished_at
+                ) VALUES (?, 'completed', ?, ?, ?, ?, NULL, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                ON CONFLICT(novel_id) DO UPDATE SET
+                    status = 'completed',
+                    model = excluded.model,
+                    character_count = excluded.character_count,
+                    relation_count = excluded.relation_count,
+                    source_excerpt_chars = excluded.source_excerpt_chars,
+                    error_message = NULL,
+                    updated_at = CURRENT_TIMESTAMP,
+                    finished_at = CURRENT_TIMESTAMP
+            ''', (
+                novel_id,
+                model,
+                len(characters),
+                saved_relation_count,
+                source_excerpt_chars,
+            ))
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
+        return serialize_character_analysis(novel_id)
+
+
+    def mark_character_analysis_failed(novel_id, error_message, *, model='', source_excerpt_chars=0):
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute('''
+            INSERT INTO novel_character_analysis_runs (
+                novel_id, status, model, character_count, relation_count,
+                source_excerpt_chars, error_message, updated_at
+            ) VALUES (?, 'failed', ?, 0, 0, ?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(novel_id) DO UPDATE SET
+                status = 'failed',
+                model = excluded.model,
+                source_excerpt_chars = excluded.source_excerpt_chars,
+                error_message = excluded.error_message,
+                updated_at = CURRENT_TIMESTAMP
+        ''', (novel_id, model, source_excerpt_chars, error_message[:500]))
+        conn.commit()
+        conn.close()
 
 
     def normalize_ai_tag_names(raw_tags):
@@ -537,6 +905,75 @@ def register_ai_routes(app, *, get_db, resolve_novel_file_path, is_text_readable
             return jsonify({'success': True, 'data': {'response': response}})
         except Exception as e:
             return jsonify({'success': False, 'message': str(e)}), 500
+
+
+    @app.route('/api/novels/<int:novel_id>/characters', methods=['GET'])
+    def get_novel_character_analysis(novel_id):
+        """获取单本小说的角色和关系分析结果。"""
+        novel = get_novel_detail_record(novel_id)
+        if not novel:
+            return jsonify({'success': False, 'message': '小说不存在'}), 404
+
+        return jsonify({
+            'success': True,
+            'data': serialize_character_analysis(novel_id)
+        })
+
+
+    @app.route('/api/ai/novels/<int:novel_id>/characters/analyze', methods=['POST'])
+    def analyze_novel_characters(novel_id):
+        """使用 AI 分析单本小说角色和角色关系。"""
+        novel = get_novel_detail_record(novel_id)
+        if not novel:
+            return jsonify({'success': False, 'message': '小说不存在'}), 404
+
+        content_excerpt = extract_text_excerpt(novel.get('file_path'), max_chars=12000)
+        if not novel.get('title') and not novel.get('description') and not content_excerpt:
+            return jsonify({'success': False, 'message': '请先填写书名，或提供可读取的 TXT 文件'}), 400
+
+        client = get_ai_client()
+        if not client:
+            return jsonify({'success': False, 'message': '请先在 AI 配置中激活可用模型'}), 400
+
+        active_config = AIConfig.get_active_config() or {}
+        model = active_config.get('model') or ''
+        messages = build_character_analysis_messages(novel, content_excerpt)
+
+        try:
+            response_text = client.chat(messages, stream=False)
+            response_data = extract_json_object(response_text)
+            characters, relations = normalize_character_analysis_payload(response_data)
+
+            if not characters:
+                return jsonify({'success': False, 'message': 'AI 未识别到可用角色，请换更多正文内容后重试'}), 500
+
+            analysis = replace_character_analysis(
+                novel_id,
+                characters,
+                relations,
+                model=model,
+                source_excerpt_chars=len(content_excerpt)
+            )
+            analysis['used_excerpt'] = bool(content_excerpt)
+            return jsonify({'success': True, 'data': analysis})
+        except (ValueError, RuntimeError) as e:
+            error_message = str(e)
+            mark_character_analysis_failed(
+                novel_id,
+                error_message,
+                model=model,
+                source_excerpt_chars=len(content_excerpt)
+            )
+            return jsonify({'success': False, 'message': error_message}), 422
+        except Exception as e:
+            error_message = str(e)
+            mark_character_analysis_failed(
+                novel_id,
+                error_message,
+                model=model,
+                source_excerpt_chars=len(content_excerpt)
+            )
+            return jsonify({'success': False, 'message': error_message}), 500
 
 
     @app.route('/api/ai/novels/metadata/feedback', methods=['POST'])
