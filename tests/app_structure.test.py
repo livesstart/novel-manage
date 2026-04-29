@@ -55,6 +55,7 @@ EXPECTED_ROUTES = [
     ('/api/novels/batch/delete', 'POST'),
     ('/api/novels/batch/status', 'POST'),
     ('/api/novels/batch/tags', 'POST'),
+    ('/api/search/fulltext', 'GET'),
     ('/api/stats', 'GET'),
     ('/api/tags', 'GET'),
     ('/api/tags', 'POST'),
@@ -87,6 +88,7 @@ class AppStructureTest(unittest.TestCase):
             'ai_routes.py',
             'crawler_routes.py',
             'reader_utils.py',
+            'search_routes.py',
             'storage_utils.py',
         ]
         unreadable_items = []

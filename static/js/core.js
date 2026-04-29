@@ -7,6 +7,7 @@ const state = {
     novels: [],
     categories: [],
     tags: [],
+    fullTextResults: [],
     currentView: 'novels',
     selectedTags: new Set(),
     expandedNovelTagIds: new Set(),

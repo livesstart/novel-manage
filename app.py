@@ -9,6 +9,8 @@ from pathlib import Path
 from flask import Flask, render_template, jsonify, request, send_file
 from flask_cors import CORS
 
+from search_routes import ensure_full_text_search_schema, register_search_routes
+
 
 app = Flask(__name__, static_folder='static', template_folder='templates')
 CORS(app)
@@ -97,6 +99,7 @@ def init_db():
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_novels_category_status_updated ON novels(category_id, status, updated_at DESC)')
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_novel_tags_tag_novel ON novel_tags(tag_id, novel_id)')
     _ensure_novel_schema(cursor)
+    ensure_full_text_search_schema(cursor)
     cursor.execute('''
         DELETE FROM novel_tags
         WHERE novel_id NOT IN (SELECT id FROM novels)
@@ -273,6 +276,17 @@ def _serialize_reading_progress(novel, chapter_count=None):
         'scroll_percent': max(0, min(scroll_percent, 100)),
         'last_read_at': novel.get('last_read_at')
     }
+
+
+register_search_routes(
+    app,
+    get_db=get_db,
+    resolve_novel_file_path=resolve_novel_file_path,
+    is_text_readable_file=is_text_readable_file,
+    detect_encoding=detect_encoding,
+    parse_chapters=parse_chapters,
+    normalize_novel_ids=_normalize_novel_ids,
+)
 
 
 @app.route('/api/novels/<int:novel_id>/read', methods=['GET'])

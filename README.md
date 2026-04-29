@@ -8,6 +8,7 @@
 
 - 小说管理：新增、编辑、删除小说，维护书名、作者、简介、文件路径、分类、标签、阅读状态和书籍详情档案。
 - 本地阅读：支持 TXT 文件章节识别、章节切换、正文阅读、阅读进度自动恢复、阅读偏好设置、沉浸阅读和单本下载。
+- 全文搜索：支持对可在线阅读的 TXT 正文建立 SQLite FTS 索引，按关键词定位命中小说和章节。
 - 分类与标签：支持自定义分类、彩色标签、多标签筛选、仅看无标签小说。
 - 批量操作：支持批量添加标签、设置分类、设置阅读状态、删除小说和批量 AI 生成简介/标签。
 - 批量导入：支持选择本地文件夹扫描小说文件，并按文件夹自动推断分类。
@@ -28,6 +29,7 @@
 novel/
 ├── app.py                 # Flask 后端与 API
 ├── ai_client.py           # AI 供应商适配与调用封装
+├── search_routes.py       # TXT 全文搜索索引与接口
 ├── requirements.txt       # Python 依赖
 ├── README.md              # 项目说明
 ├── templates/
@@ -105,7 +107,7 @@ http://localhost:5000
 
 ### 小说列表
 
-进入首页后可以搜索小说名或作者，并按分类、标签、阅读状态筛选。卡片上提供详情、阅读、下载、编辑和删除操作；详情页会集中展示简介、标签、阅读进度、最近阅读时间、章节数、字数、文件路径、文件大小和文件检查状态。左上角圆形勾选控件用于批量操作。打开 TXT 小说阅读时会自动恢复到上次阅读的章节和滚动位置，阅读器支持主题、字号、行高、正文宽度、段落间距、目录收起和沉浸模式。
+进入首页后可以搜索小说名或作者，并按分类、标签、阅读状态筛选。搜索框右侧开启“全文”后，会对可在线阅读的 TXT 正文和章节进行全文搜索，结果会展示命中小说、章节和摘要，点击可直接打开对应章节。卡片上提供详情、阅读、下载、编辑和删除操作；详情页会集中展示简介、标签、阅读进度、最近阅读时间、章节数、字数、文件路径、文件大小和文件检查状态。左上角圆形勾选控件用于批量操作。打开 TXT 小说阅读时会自动恢复到上次阅读的章节和滚动位置，阅读器支持主题、字号、行高、正文宽度、段落间距、目录收起和沉浸模式。
 
 ### 添加小说
 
@@ -202,22 +204,29 @@ node tests/frontend-split.test.js
 node tests/frontend-css-split.test.js
 node tests/novel-detail-ui.test.js
 node tests/reader-experience-ui.test.js
+node tests/full-text-search-ui.test.js
 node tests/novels-view-hero.test.js
 node tests/novel-card-ui.test.js
+python tests/app_structure.test.py
+python tests/full_text_search.test.py
 python tests/novel_detail_file.test.py
 ```
 
 常用提交前检查：
 
 ```bash
-python -m py_compile app.py ai_client.py
+python -m py_compile app.py ai_client.py ai_routes.py crawler_routes.py reader_utils.py search_routes.py storage_utils.py
 node --check static/js/app.js
+node --check static/js/novels.js
 node tests/frontend-split.test.js
 node tests/frontend-css-split.test.js
 node tests/novel-detail-ui.test.js
 node tests/reader-experience-ui.test.js
+node tests/full-text-search-ui.test.js
 node tests/novels-view-hero.test.js
 node tests/novel-card-ui.test.js
+python tests/app_structure.test.py
+python tests/full_text_search.test.py
 python tests/novel_detail_file.test.py
 git diff --check
 ```

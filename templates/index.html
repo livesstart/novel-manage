@@ -71,6 +71,10 @@
                 <div class="search-box">
                     <i class="fas fa-search"></i>
                     <input type="text" id="search-input" placeholder="搜索小说名称或作者...">
+                    <label class="full-text-search-toggle" title="在 TXT 正文和章节中搜索">
+                        <input type="checkbox" id="full-text-search-toggle">
+                        <span>全文</span>
+                    </label>
                 </div>
                 <div class="header-actions">
                     <button class="btn btn-secondary" id="btn-batch-import">
@@ -138,11 +142,12 @@
                                 <span class="novels-tip">支持批量勾选、快速阅读和下载</span>
                             </div>
                         </div>
-                        <label class="novels-select-all">
-                            <input type="checkbox" id="select-all-novels-main">
-                            <span>全选</span>
-                        </label>
+                    <label class="novels-select-all">
+                        <input type="checkbox" id="select-all-novels-main">
+                        <span>全选</span>
+                    </label>
                     </div>
+                    <div class="full-text-search-results is-hidden" id="full-text-search-results" aria-live="polite"></div>
                     <div class="novels-grid" id="novels-grid">
                         <!-- 动态加载小说卡片 -->
                     </div>

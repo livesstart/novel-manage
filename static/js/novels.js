@@ -31,6 +31,7 @@ async function loadNovels(filters = {}) {
             state.novels = res.data;
             const currentNovelIds = new Set(res.data.map(novel => novel.id));
             state.expandedNovelTagIds = new Set([...state.expandedNovelTagIds].filter(id => currentNovelIds.has(id)));
+            hideFullTextSearchResults();
             renderNovels();
         }
     } catch (err) {
@@ -167,6 +168,129 @@ function renderNovels() {
             </div>
         </div>
     `}).join('');
+}
+
+function hideFullTextSearchResults() {
+    const resultsContainer = document.getElementById('full-text-search-results');
+    const novelsGrid = document.getElementById('novels-grid');
+    if (resultsContainer) {
+        resultsContainer.classList.add('is-hidden');
+        resultsContainer.innerHTML = '';
+    }
+    if (novelsGrid) {
+        novelsGrid.classList.remove('is-full-text-mode');
+    }
+}
+
+function renderFullTextSearchResults(query, results) {
+    const resultsContainer = document.getElementById('full-text-search-results');
+    const novelsGrid = document.getElementById('novels-grid');
+    if (!resultsContainer || !novelsGrid) return;
+
+    novelsGrid.classList.add('is-full-text-mode');
+    resultsContainer.classList.remove('is-hidden');
+    document.getElementById('novels-count').textContent = `全文命中 ${results.length} 条`;
+
+    if (results.length === 0) {
+        resultsContainer.innerHTML = `
+            <div class="full-text-search-empty">
+                <i class="fas fa-magnifying-glass"></i>
+                <h3>没有找到正文命中</h3>
+                <p>换个关键词试试，当前只索引可在线阅读的 TXT 文件。</p>
+            </div>
+        `;
+        return;
+    }
+
+    resultsContainer.innerHTML = `
+        <div class="full-text-search-summary">
+            <span>关键词</span>
+            <strong>${escapeHtml(query)}</strong>
+        </div>
+        <div class="full-text-search-list">
+            ${results.map(result => `
+                <article class="full-text-search-result">
+                    <div class="full-text-hit-main">
+                        <div class="full-text-hit-title">${escapeHtml(result.title)}</div>
+                        <div class="full-text-hit-meta">
+                            <span>${escapeHtml(result.author || '未知作者')}</span>
+                            <span>第 ${Number(result.chapter_index) + 1} 章</span>
+                            <span>${escapeHtml(result.chapter_title || '未命名章节')}</span>
+                        </div>
+                        <p class="full-text-hit-snippet">${escapeHtml(result.snippet)}</p>
+                    </div>
+                    <div class="full-text-hit-actions">
+                        <button class="btn btn-sm btn-secondary" onclick="openNovelDetail(${result.novel_id})">
+                            <i class="fas fa-circle-info"></i> 详情
+                        </button>
+                        <button class="btn btn-sm btn-primary" onclick="openFullTextSearchResult(${result.novel_id}, ${result.chapter_index})">
+                            <i class="fas fa-book-open"></i> 打开章节
+                        </button>
+                    </div>
+                </article>
+            `).join('')}
+        </div>
+    `;
+}
+
+async function searchFullTextNovels(query) {
+    const keyword = (query || '').trim();
+    if (!keyword) {
+        hideFullTextSearchResults();
+        return;
+    }
+
+    const resultsContainer = document.getElementById('full-text-search-results');
+    const novelsGrid = document.getElementById('novels-grid');
+    if (resultsContainer && novelsGrid) {
+        novelsGrid.classList.add('is-full-text-mode');
+        resultsContainer.classList.remove('is-hidden');
+        resultsContainer.innerHTML = `
+            <div class="full-text-search-loading">
+                <i class="fas fa-spinner fa-spin"></i>
+                <span>正在搜索正文...</span>
+            </div>
+        `;
+    }
+
+    try {
+        const params = new URLSearchParams({ q: keyword });
+        const res = await api.get(`/api/search/fulltext?${params}`);
+        const currentKeyword = document.getElementById('search-input').value.trim();
+        const fullTextSearchEnabled = document.getElementById('full-text-search-toggle')?.checked;
+        if (!fullTextSearchEnabled || currentKeyword !== keyword) {
+            return;
+        }
+
+        if (!res.success) {
+            showToast(res.message || '全文搜索失败', 'error');
+            renderFullTextSearchResults(keyword, []);
+            return;
+        }
+
+        state.fullTextResults = res.data.results || [];
+        renderFullTextSearchResults(keyword, state.fullTextResults);
+    } catch (err) {
+        const currentKeyword = document.getElementById('search-input').value.trim();
+        const fullTextSearchEnabled = document.getElementById('full-text-search-toggle')?.checked;
+        if (!fullTextSearchEnabled || currentKeyword !== keyword) {
+            return;
+        }
+
+        console.error('全文搜索失败:', err);
+        showToast('全文搜索失败', 'error');
+        renderFullTextSearchResults(keyword, []);
+    }
+}
+
+async function openFullTextSearchResult(novelId, chapterIndex) {
+    try {
+        await openReader(novelId);
+        await loadChapter(Number(chapterIndex));
+    } catch (err) {
+        console.error('打开全文搜索命中章节失败:', err);
+        showToast('打开章节失败', 'error');
+    }
 }
 
 // 渲染分类列表
@@ -518,7 +642,13 @@ async function generateNovelMetadataWithAI() {
 
 // 应用筛选
 function applyFilters() {
-    const keyword = document.getElementById('search-input').value;
+    const keyword = document.getElementById('search-input').value.trim();
+    const fullTextSearchEnabled = document.getElementById('full-text-search-toggle')?.checked;
+    if (fullTextSearchEnabled && keyword) {
+        searchFullTextNovels(keyword);
+        return;
+    }
+
     const categoryId = document.getElementById('filter-category').value;
     const status = document.getElementById('filter-status').value;
     const untaggedOnly = document.getElementById('filter-untagged-only').checked;
