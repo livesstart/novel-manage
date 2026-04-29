@@ -314,6 +314,7 @@ function bindEvents() {
     document.getElementById('reader-prev-chapter').addEventListener('click', prevChapter);
     document.getElementById('reader-next-chapter').addEventListener('click', nextChapter);
     document.getElementById('reader-content').addEventListener('scroll', scheduleSaveReadingProgress);
+    window.addEventListener('resize', syncReaderResponsiveState);
 
     // 字体大小调整
     document.getElementById('reader-font-increase').addEventListener('click', increaseFontSize);
@@ -321,19 +322,38 @@ function bindEvents() {
 
     // 主题切换
     document.getElementById('reader-theme-toggle').addEventListener('click', toggleReaderTheme);
+    document.getElementById('reader-theme-select').addEventListener('change', updateReaderSettingsFromControls);
+    document.getElementById('reader-font-size').addEventListener('input', updateReaderSettingsFromControls);
+    document.getElementById('reader-line-height').addEventListener('input', updateReaderSettingsFromControls);
+    document.getElementById('reader-width').addEventListener('input', updateReaderSettingsFromControls);
+    document.getElementById('reader-spacing').addEventListener('input', updateReaderSettingsFromControls);
+    document.getElementById('reader-settings-toggle').addEventListener('click', toggleReaderSettingsPanel);
+    document.getElementById('reader-immersive-toggle').addEventListener('click', toggleReaderImmersiveMode);
+    document.getElementById('reader-toc-toggle').addEventListener('click', toggleReaderToc);
 
     // 键盘快捷键
     document.addEventListener('keydown', (e) => {
         // 只在阅读器打开时生效
         if (!document.getElementById('reader-modal').classList.contains('active')) return;
+        if (['INPUT', 'TEXTAREA', 'SELECT', 'BUTTON'].includes(e.target.tagName)) return;
 
         switch(e.key) {
             case 'ArrowLeft':
+                e.preventDefault();
                 prevChapter();
                 break;
             case 'ArrowRight':
-            case ' ':
+                e.preventDefault();
                 nextChapter();
+                break;
+            case ' ':
+            case 'PageDown':
+                e.preventDefault();
+                scrollReaderByPage(1);
+                break;
+            case 'PageUp':
+                e.preventDefault();
+                scrollReaderByPage(-1);
                 break;
             case 'Escape':
                 saveReadingProgressNow();

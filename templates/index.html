@@ -1004,6 +1004,9 @@
         <div class="modal-content reader-content">
             <div class="reader-header">
                 <div class="reader-title-section">
+                    <button class="btn-icon reader-mobile-control" id="reader-toc-toggle" title="章节目录" aria-pressed="false">
+                        <i class="fas fa-list"></i>
+                    </button>
                     <h3 id="reader-novel-title">小说标题</h3>
                     <span class="reader-chapter-title" id="reader-chapter-title"></span>
                 </div>
@@ -1016,6 +1019,12 @@
                     </button>
                     <button class="btn-icon" id="reader-theme-toggle" title="切换主题">
                         <i class="fas fa-moon"></i>
+                    </button>
+                    <button class="btn-icon" id="reader-settings-toggle" title="阅读设置" aria-expanded="false">
+                        <i class="fas fa-sliders-h"></i>
+                    </button>
+                    <button class="btn-icon" id="reader-immersive-toggle" title="沉浸阅读" aria-pressed="false">
+                        <i class="fas fa-expand"></i>
                     </button>
                     <button class="btn-icon" id="reader-close" title="关闭">
                         <i class="fas fa-times"></i>
@@ -1036,6 +1045,33 @@
                 </div>
 
                 <div class="reader-main">
+                    <div class="reader-settings-panel hidden" id="reader-settings-panel" aria-label="阅读设置">
+                        <label class="reader-setting-field">
+                            <span>主题</span>
+                            <select id="reader-theme-select">
+                                <option value="light">明亮</option>
+                                <option value="sepia">纸张</option>
+                                <option value="green">护眼</option>
+                                <option value="dark">夜间</option>
+                            </select>
+                        </label>
+                        <label class="reader-setting-field">
+                            <span>字号 <b id="reader-font-size-value">19</b></span>
+                            <input type="range" id="reader-font-size" min="14" max="32" step="1" value="19">
+                        </label>
+                        <label class="reader-setting-field">
+                            <span>行高 <b id="reader-line-height-value">1.9</b></span>
+                            <input type="range" id="reader-line-height" min="1.4" max="2.4" step="0.1" value="1.9">
+                        </label>
+                        <label class="reader-setting-field">
+                            <span>宽度 <b id="reader-width-value">860</b></span>
+                            <input type="range" id="reader-width" min="620" max="1080" step="20" value="860">
+                        </label>
+                        <label class="reader-setting-field">
+                            <span>段距 <b id="reader-spacing-value">1.0</b></span>
+                            <input type="range" id="reader-spacing" min="0.6" max="1.8" step="0.1" value="1.0">
+                        </label>
+                    </div>
                     <div class="reader-content-area" id="reader-content">
                         <div class="reader-loading" id="reader-loading">
                             <i class="fas fa-spinner fa-spin"></i>
@@ -1053,7 +1089,15 @@
                             <i class="fas fa-chevron-left"></i>
                             上一章
                         </button>
-                        <span class="reader-progress" id="reader-progress">1 / 1</span>
+                        <div class="reader-progress-panel">
+                            <div class="reader-progress-track" id="reader-progress-track">
+                                <div class="reader-progress-fill" id="reader-progress-fill"></div>
+                            </div>
+                            <div class="reader-progress-meta">
+                                <span class="reader-progress" id="reader-progress">1 / 1</span>
+                                <span class="reader-scroll-percent" id="reader-scroll-percent">0%</span>
+                            </div>
+                        </div>
                         <button class="btn btn-secondary" id="reader-next-chapter" disabled>
                             下一章
                             <i class="fas fa-chevron-right"></i>
