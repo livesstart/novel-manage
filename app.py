@@ -21,6 +21,23 @@ def get_db():
     return conn
 
 
+def _ensure_table_columns(cursor, table_name, required_columns):
+    cursor.execute(f'PRAGMA table_info({table_name})')
+    existing_columns = {row['name'] for row in cursor.fetchall()}
+
+    for column_name, definition in required_columns.items():
+        if column_name not in existing_columns:
+            cursor.execute(f'ALTER TABLE {table_name} ADD COLUMN {column_name} {definition}')
+
+
+def _ensure_novel_schema(cursor):
+    _ensure_table_columns(cursor, 'novels', {
+        'last_read_chapter_index': 'INTEGER DEFAULT 0',
+        'last_read_scroll_percent': 'REAL DEFAULT 0',
+        'last_read_at': 'TIMESTAMP'
+    })
+
+
 def init_db():
     """初始化数据库"""
     conn = get_db()
@@ -78,6 +95,7 @@ def init_db():
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_novels_file_path ON novels(file_path)')
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_novels_category_status_updated ON novels(category_id, status, updated_at DESC)')
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_novel_tags_tag_novel ON novel_tags(tag_id, novel_id)')
+    _ensure_novel_schema(cursor)
     cursor.execute('''
         DELETE FROM novel_tags
         WHERE novel_id NOT IN (SELECT id FROM novels)
@@ -237,6 +255,25 @@ def get_novels():
 # ==================== Reader routes ====================
 from reader_utils import detect_encoding, parse_chapters
 
+
+def _serialize_reading_progress(novel, chapter_count=None):
+    max_index = max((chapter_count or 1) - 1, 0)
+    try:
+        chapter_index = int(novel.get('last_read_chapter_index') or 0)
+    except (TypeError, ValueError):
+        chapter_index = 0
+    try:
+        scroll_percent = float(novel.get('last_read_scroll_percent') or 0)
+    except (TypeError, ValueError):
+        scroll_percent = 0
+
+    return {
+        'chapter_index': max(0, min(chapter_index, max_index)),
+        'scroll_percent': max(0, min(scroll_percent, 100)),
+        'last_read_at': novel.get('last_read_at')
+    }
+
+
 @app.route('/api/novels/<int:novel_id>/read', methods=['GET'])
 def read_novel(novel_id):
     """获取小说阅读内容"""
@@ -288,6 +325,7 @@ def read_novel(novel_id):
             'data': {
                 'novel': novel,
                 'chapters': [{'title': c['title'], 'line_num': c['line_num']} for c in chapters],
+                'reading_progress': _serialize_reading_progress(novel, len(chapters)),
                 'total_chars': len(content),
                 'encoding': encoding
             }
@@ -347,6 +385,71 @@ def get_chapter_content(novel_id, chapter_index):
 
     except Exception as e:
         return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@app.route('/api/novels/<int:novel_id>/reading-progress', methods=['PUT'])
+def update_reading_progress(novel_id):
+    """保存小说阅读进度"""
+    data = request.get_json(silent=True) or {}
+    conn = get_db()
+    cursor = conn.cursor()
+
+    cursor.execute('SELECT * FROM novels WHERE id = ?', (novel_id,))
+    row = cursor.fetchone()
+    if not row:
+        conn.close()
+        return jsonify({'success': False, 'message': '小说不存在'}), 404
+
+    novel = dict(row)
+    try:
+        chapter_index = int(data.get('chapter_index', 0))
+    except (TypeError, ValueError):
+        chapter_index = 0
+    try:
+        scroll_percent = float(data.get('scroll_percent', 0))
+    except (TypeError, ValueError):
+        scroll_percent = 0
+
+    chapter_count = 1
+    file_path = novel.get('file_path')
+    actual_path, _ = resolve_novel_file_path(file_path)
+    if actual_path and is_text_readable_file(actual_path):
+        try:
+            encoding = detect_encoding(actual_path)
+            with open(actual_path, 'r', encoding=encoding, errors='ignore') as handle:
+                chapter_count = max(len(parse_chapters(handle.read())), 1)
+        except Exception:
+            chapter_count = 1
+
+    progress = {
+        'last_read_chapter_index': max(0, min(chapter_index, chapter_count - 1)),
+        'last_read_scroll_percent': max(0, min(scroll_percent, 100))
+    }
+
+    cursor.execute('''
+        UPDATE novels
+        SET last_read_chapter_index = ?,
+            last_read_scroll_percent = ?,
+            last_read_at = CURRENT_TIMESTAMP,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+    ''', (
+        progress['last_read_chapter_index'],
+        progress['last_read_scroll_percent'],
+        novel_id
+    ))
+    conn.commit()
+
+    cursor.execute('SELECT * FROM novels WHERE id = ?', (novel_id,))
+    updated = dict(cursor.fetchone())
+    conn.close()
+
+    return jsonify({
+        'success': True,
+        'data': {
+            'reading_progress': _serialize_reading_progress(updated, chapter_count)
+        }
+    })
 
 
 @app.route('/api/novels/<int:novel_id>', methods=['GET'])

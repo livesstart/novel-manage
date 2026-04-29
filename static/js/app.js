@@ -624,12 +624,18 @@ const readerState = {
     chapters: [],
     currentChapter: 0,
     fontSize: 18,
-    darkTheme: false
+    darkTheme: false,
+    progressSaveTimer: null,
+    isRestoringProgress: false
 };
 
 async function openReader(novelId) {
     readerState.novelId = novelId;
     readerState.currentChapter = 0;
+    if (readerState.progressSaveTimer) {
+        clearTimeout(readerState.progressSaveTimer);
+        readerState.progressSaveTimer = null;
+    }
 
     // 显示阅读器弹窗
     openModal('reader-modal');
@@ -645,6 +651,12 @@ async function openReader(novelId) {
         if (res.success) {
             const data = res.data;
             readerState.chapters = data.chapters;
+            const readingProgress = data.reading_progress || {};
+            const startChapterIndex = normalizeReaderChapterIndex(
+                readingProgress.chapter_index,
+                data.chapters.length
+            );
+            readerState.currentChapter = startChapterIndex;
 
             // 更新小说标题
             document.getElementById('reader-novel-title').textContent = data.novel.title;
@@ -655,8 +667,11 @@ async function openReader(novelId) {
             // 渲染目录
             renderTOC();
 
-            // 加载第一章
-            await loadChapter(0);
+            // 加载上次阅读位置
+            await loadChapter(startChapterIndex, {
+                scrollPercent: readingProgress.scroll_percent,
+                skipSave: true
+            });
         } else {
             // 显示错误信息但仍在阅读器中显示
             document.getElementById('reader-loading').classList.add('hidden');
@@ -693,7 +708,63 @@ function renderTOC() {
     `).join('');
 }
 
-async function loadChapter(index) {
+function normalizeReaderChapterIndex(value, chapterCount) {
+    const parsed = parseInt(value, 10);
+    if (!Number.isFinite(parsed)) return 0;
+    return Math.max(0, Math.min(parsed, Math.max(chapterCount - 1, 0)));
+}
+
+function calculateReaderScrollPercent() {
+    const content = document.getElementById('reader-content');
+    const maxScroll = content.scrollHeight - content.clientHeight;
+    if (maxScroll <= 0) return 0;
+    return Math.max(0, Math.min((content.scrollTop / maxScroll) * 100, 100));
+}
+
+function restoreReaderScrollPercent(scrollPercent) {
+    const content = document.getElementById('reader-content');
+    const percent = Math.max(0, Math.min(Number(scrollPercent) || 0, 100));
+    const maxScroll = content.scrollHeight - content.clientHeight;
+
+    readerState.isRestoringProgress = true;
+    content.scrollTop = maxScroll > 0 ? (maxScroll * percent) / 100 : 0;
+
+    setTimeout(() => {
+        readerState.isRestoringProgress = false;
+    }, 0);
+}
+
+function scheduleSaveReadingProgress(delayMs = 800) {
+    if (!readerState.novelId || readerState.isRestoringProgress) return;
+
+    if (readerState.progressSaveTimer) {
+        clearTimeout(readerState.progressSaveTimer);
+    }
+
+    readerState.progressSaveTimer = setTimeout(() => {
+        saveReadingProgressNow();
+    }, delayMs);
+}
+
+async function saveReadingProgressNow() {
+    if (!readerState.novelId) return;
+
+    if (readerState.progressSaveTimer) {
+        clearTimeout(readerState.progressSaveTimer);
+        readerState.progressSaveTimer = null;
+    }
+
+    try {
+        await api.put(`/api/novels/${readerState.novelId}/reading-progress`, {
+            chapter_index: readerState.currentChapter,
+            scroll_percent: Number(calculateReaderScrollPercent().toFixed(2))
+        });
+    } catch (err) {
+        console.warn('保存阅读进度失败:', err);
+    }
+}
+
+async function loadChapter(index, options = {}) {
     if (index < 0 || index >= readerState.chapters.length) return;
 
     readerState.currentChapter = index;
@@ -745,8 +816,15 @@ async function loadChapter(index) {
             document.getElementById('reader-loading').classList.add('hidden');
             document.getElementById('reader-text').classList.remove('hidden');
 
-            // 滚动到顶部
-            document.getElementById('reader-content').scrollTop = 0;
+            if (Number.isFinite(Number(options.scrollPercent)) && Number(options.scrollPercent) > 0) {
+                restoreReaderScrollPercent(options.scrollPercent);
+            } else {
+                document.getElementById('reader-content').scrollTop = 0;
+            }
+
+            if (!options.skipSave) {
+                scheduleSaveReadingProgress(0);
+            }
         } else {
             document.getElementById('reader-loading').classList.add('hidden');
             document.getElementById('reader-empty').classList.remove('hidden');
@@ -3095,12 +3173,14 @@ function bindEvents() {
 
     // 关闭阅读器
     document.getElementById('reader-close').addEventListener('click', () => {
+        saveReadingProgressNow();
         closeModal('reader-modal');
     });
 
     // 上一章/下一章
     document.getElementById('reader-prev-chapter').addEventListener('click', prevChapter);
     document.getElementById('reader-next-chapter').addEventListener('click', nextChapter);
+    document.getElementById('reader-content').addEventListener('scroll', scheduleSaveReadingProgress);
 
     // 字体大小调整
     document.getElementById('reader-font-increase').addEventListener('click', increaseFontSize);
@@ -3123,6 +3203,7 @@ function bindEvents() {
                 nextChapter();
                 break;
             case 'Escape':
+                saveReadingProgressNow();
                 closeModal('reader-modal');
                 break;
         }

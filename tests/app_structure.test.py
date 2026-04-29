@@ -50,6 +50,7 @@ EXPECTED_ROUTES = [
     ('/api/novels/<int:novel_id>/check-file', 'GET'),
     ('/api/novels/<int:novel_id>/download', 'GET'),
     ('/api/novels/<int:novel_id>/read', 'GET'),
+    ('/api/novels/<int:novel_id>/reading-progress', 'PUT'),
     ('/api/novels/batch/category', 'POST'),
     ('/api/novels/batch/delete', 'POST'),
     ('/api/novels/batch/status', 'POST'),
