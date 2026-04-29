@@ -3,28 +3,37 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const root = path.resolve(__dirname, '..');
-const appJs = fs.readFileSync(path.join(root, 'static/js/app.js'), 'utf8');
+const frontendJs = [
+    'core.js',
+    'novels.js',
+    'reader.js',
+    'crawler.js',
+    'ai.js',
+    'batch.js',
+    'import.js',
+    'app.js',
+].map(fileName => fs.readFileSync(path.join(root, 'static/js', fileName), 'utf8')).join('\n');
 
 assert.match(
-    appJs,
+    frontendJs,
     /reading_progress/,
     'reader should consume reading_progress returned by the read API'
 );
 
 assert.match(
-    appJs,
+    frontendJs,
     /loadChapter\(startChapterIndex,\s*\{\s*scrollPercent:/,
     'reader should restore the saved chapter and scroll percentage when opened'
 );
 
 assert.match(
-    appJs,
+    frontendJs,
     /\/api\/novels\/\$\{readerState\.novelId\}\/reading-progress/,
     'reader should persist progress through the reading-progress API'
 );
 
 assert.match(
-    appJs,
+    frontendJs,
     /reader-content'\)\.addEventListener\('scroll',\s*scheduleSaveReadingProgress\)/,
     'reader should save progress when the reading pane scrolls'
 );

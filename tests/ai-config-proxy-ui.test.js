@@ -4,8 +4,20 @@ const path = require('node:path');
 
 const root = path.resolve(__dirname, '..');
 const template = fs.readFileSync(path.join(root, 'templates/index.html'), 'utf8');
-const appJs = fs.readFileSync(path.join(root, 'static/js/app.js'), 'utf8');
-const css = fs.readFileSync(path.join(root, 'static/css/style.css'), 'utf8');
+const aiJs = fs.readFileSync(path.join(root, 'static/js/ai.js'), 'utf8');
+
+function readImportedCss() {
+    const cssDir = path.join(root, 'static/css');
+    const styleCss = fs.readFileSync(path.join(cssDir, 'style.css'), 'utf8');
+    const imports = [...styleCss.matchAll(/@import url\('\.\/([^']+)'\);/g)]
+        .map(match => match[1]);
+
+    return imports
+        .map(fileName => fs.readFileSync(path.join(cssDir, fileName), 'utf8'))
+        .join('\n');
+}
+
+const css = readImportedCss();
 
 assert.match(
     template,
@@ -20,13 +32,13 @@ assert.match(
 );
 
 assert.match(
-    appJs,
+    aiJs,
     /use_proxy:\s*document\.getElementById\('ai-config-use-proxy'\)\.checked/,
     'AI config form collection should include use_proxy'
 );
 
 assert.match(
-    appJs,
+    aiJs,
     /proxy_url:\s*document\.getElementById\('ai-config-proxy-url'\)\.value\.trim\(\)/,
     'AI config form collection should include proxy_url'
 );

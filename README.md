@@ -34,9 +34,27 @@ novel/
 │   └── index.html         # 单页应用模板
 ├── static/
 │   ├── css/
-│   │   └── style.css      # 页面样式
+│   │   ├── style.css      # CSS 入口，按顺序引入样式分片
+│   │   ├── base.css       # 基础变量与全局样式
+│   │   ├── layout.css     # 应用布局、侧边栏与顶部栏
+│   │   ├── components.css # 通用按钮和内容区域
+│   │   ├── novels.css     # 小说列表、分类和标签
+│   │   ├── forms.css      # 弹窗、表单、空态和提示
+│   │   ├── import.css     # 批量导入
+│   │   ├── batch.css      # 批量操作
+│   │   ├── crawler.css    # 爬虫管理
+│   │   ├── reader.css     # 阅读器
+│   │   ├── ai.css         # AI 配置
+│   │   └── overrides.css  # 页面刷新后的覆盖和细化样式
 │   └── js/
-│       └── app.js         # 前端交互逻辑
+│       ├── core.js        # 前端共享状态、API 与通用工具
+│       ├── novels.js      # 小说、分类、标签和筛选交互
+│       ├── reader.js      # TXT 阅读器与阅读进度
+│       ├── crawler.js     # 爬虫规则和任务交互
+│       ├── ai.js          # AI 配置、模型测试和聊天
+│       ├── batch.js       # 批量操作和批量 AI
+│       ├── import.js      # 批量导入
+│       └── app.js         # 应用初始化和事件绑定入口
 ├── tests/
 │   ├── novel-card-ui.test.js
 │   └── novels-view-hero.test.js
@@ -177,9 +195,11 @@ ALLOW_PRIVATE_CRAWLER_TARGETS=1 python app.py
 
 ## 测试与检查
 
-当前仓库包含两个轻量 Node 回归测试：
+当前仓库包含轻量 Node 与 Python 回归测试：
 
 ```bash
+node tests/frontend-split.test.js
+node tests/frontend-css-split.test.js
 node tests/novels-view-hero.test.js
 node tests/novel-card-ui.test.js
 ```
@@ -189,6 +209,8 @@ node tests/novel-card-ui.test.js
 ```bash
 python -m py_compile app.py ai_client.py
 node --check static/js/app.js
+node tests/frontend-split.test.js
+node tests/frontend-css-split.test.js
 node tests/novels-view-hero.test.js
 node tests/novel-card-ui.test.js
 git diff --check

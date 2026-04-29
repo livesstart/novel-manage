@@ -3,23 +3,35 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const root = path.resolve(__dirname, '..');
-const appJs = fs.readFileSync(path.join(root, 'static/js/app.js'), 'utf8');
-const css = fs.readFileSync(path.join(root, 'static/css/style.css'), 'utf8');
+const novelsJs = fs.readFileSync(path.join(root, 'static/js/novels.js'), 'utf8');
+
+function readImportedCss() {
+    const cssDir = path.join(root, 'static/css');
+    const styleCss = fs.readFileSync(path.join(cssDir, 'style.css'), 'utf8');
+    const imports = [...styleCss.matchAll(/@import url\('\.\/([^']+)'\);/g)]
+        .map(match => match[1]);
+
+    return imports
+        .map(fileName => fs.readFileSync(path.join(cssDir, fileName), 'utf8'))
+        .join('\n');
+}
+
+const css = readImportedCss();
 
 assert.match(
-    appJs,
+    novelsJs,
     /<label class="novel-select-control"/,
     'novel cards should render a custom selection control wrapper'
 );
 
 assert.match(
-    appJs,
+    novelsJs,
     /aria-label="批量选择/,
     'selection control should have an accessible label'
 );
 
 assert.match(
-    appJs,
+    novelsJs,
     /class="novel-select-indicator"/,
     'selection control should render a styled visual indicator'
 );
