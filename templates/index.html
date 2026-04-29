@@ -428,6 +428,95 @@
         </div>
     </div>
 
+    <!-- 小说详情弹窗 -->
+    <div class="modal novel-detail-modal" id="novel-detail-modal">
+        <div class="modal-content modal-lg">
+            <div class="modal-header">
+                <h3>小说详情</h3>
+                <button class="btn-close">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="novel-detail-hero">
+                    <div class="novel-detail-cover" aria-hidden="true">
+                        <i class="fas fa-book-open"></i>
+                    </div>
+                    <div class="novel-detail-main">
+                        <span class="section-kicker">本地书籍档案</span>
+                        <h2 id="novel-detail-title">小说标题</h2>
+                        <div class="novel-detail-subtitle">
+                            <span id="novel-detail-author">未知作者</span>
+                            <span id="novel-detail-status" class="novel-status status-0">未读</span>
+                            <span id="novel-detail-category" class="novel-category">未分类</span>
+                        </div>
+                        <div class="novel-detail-tags" id="novel-detail-tags"></div>
+                    </div>
+                </div>
+
+                <div class="novel-detail-metrics">
+                    <div class="novel-detail-metric">
+                        <span>阅读进度</span>
+                        <strong id="novel-detail-progress">0%</strong>
+                    </div>
+                    <div class="novel-detail-metric">
+                        <span>最近阅读</span>
+                        <strong id="novel-detail-last-read">未记录</strong>
+                    </div>
+                    <div class="novel-detail-metric">
+                        <span>章节数</span>
+                        <strong id="novel-detail-chapter-count">--</strong>
+                    </div>
+                    <div class="novel-detail-metric">
+                        <span>字数</span>
+                        <strong id="novel-detail-char-count">--</strong>
+                    </div>
+                </div>
+
+                <div class="novel-detail-section">
+                    <h4>简介</h4>
+                    <p class="novel-detail-description" id="novel-detail-description">暂无简介</p>
+                </div>
+
+                <div class="novel-detail-file-card">
+                    <div class="novel-detail-file-head">
+                        <div>
+                            <h4>本地文件</h4>
+                            <p id="novel-detail-file-path">未设置文件路径</p>
+                        </div>
+                        <span class="novel-detail-status-pill checking" id="novel-detail-file-status">待检查</span>
+                    </div>
+                    <div class="novel-detail-file-grid">
+                        <div>
+                            <span>文件大小</span>
+                            <strong id="novel-detail-file-size">--</strong>
+                        </div>
+                        <div>
+                            <span>修改时间</span>
+                            <strong id="novel-detail-file-updated">--</strong>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" id="btn-detail-check-file">
+                    <i class="fas fa-rotate"></i>
+                    重新检查
+                </button>
+                <button class="btn btn-secondary" id="btn-detail-download">
+                    <i class="fas fa-download"></i>
+                    下载
+                </button>
+                <button class="btn btn-secondary" id="btn-detail-edit">
+                    <i class="fas fa-edit"></i>
+                    编辑
+                </button>
+                <button class="btn btn-primary" id="btn-detail-read">
+                    <i class="fas fa-book-open"></i>
+                    继续阅读
+                </button>
+            </div>
+        </div>
+    </div>
+
     <!-- 分类弹窗 -->
     <div class="modal" id="category-modal">
         <div class="modal-content">

@@ -149,6 +149,9 @@ function renderNovels() {
             ${novel.description ? `<div class="novel-description">${escapeHtml(novel.description)}</div>` : ''}
             ${renderNovelTags(novel)}
             <div class="novel-actions">
+                <button class="btn btn-sm btn-secondary" onclick="openNovelDetail(${novel.id})">
+                    <i class="fas fa-circle-info"></i> 详情
+                </button>
                 <button class="btn btn-sm btn-secondary" onclick="openNovelFile(${novel.id})">
                     <i class="fas fa-book-open"></i> 阅读
                 </button>
@@ -532,6 +535,167 @@ function applyFilters() {
 // 打开小说阅读器
 async function openNovelFile(novelId) {
     openReader(novelId);
+}
+
+function formatFileSize(bytes) {
+    if (!Number.isFinite(Number(bytes))) return '--';
+
+    const size = Number(bytes);
+    const units = ['B', 'KB', 'MB', 'GB'];
+    let value = size;
+    let unitIndex = 0;
+
+    while (value >= 1024 && unitIndex < units.length - 1) {
+        value /= 1024;
+        unitIndex += 1;
+    }
+
+    const digits = unitIndex === 0 ? 0 : 1;
+    return `${value.toFixed(digits)} ${units[unitIndex]}`;
+}
+
+function formatDateTime(value) {
+    if (!value) return '未记录';
+
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return String(value);
+
+    return date.toLocaleString('zh-CN', {
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit'
+    });
+}
+
+function formatNumber(value) {
+    const number = Number(value);
+    if (!Number.isFinite(number)) return '--';
+    return number.toLocaleString('zh-CN');
+}
+
+function renderNovelDetailTags(tags = []) {
+    const container = document.getElementById('novel-detail-tags');
+    if (!Array.isArray(tags) || tags.length === 0) {
+        container.innerHTML = '<span class="novel-detail-empty-tag">无标签</span>';
+        return;
+    }
+
+    container.innerHTML = tags.map(tag => `
+        <span class="novel-tag" style="background-color: ${tag.color}20; color: ${tag.color}">
+            ${escapeHtml(tag.name)}
+        </span>
+    `).join('');
+}
+
+function calculateNovelReadingPercent(readingProgress, chapterCount) {
+    if (!readingProgress || !chapterCount) return 0;
+
+    const chapterIndex = Number(readingProgress.chapter_index) || 0;
+    const scrollPercent = Math.max(0, Math.min(Number(readingProgress.scroll_percent) || 0, 100));
+    const percent = ((chapterIndex + scrollPercent / 100) / Math.max(chapterCount, 1)) * 100;
+    return Math.max(0, Math.min(percent, 100));
+}
+
+function renderNovelDetail(novel) {
+    state.detailNovel = novel;
+
+    document.getElementById('novel-detail-title').textContent = novel.title || '未命名小说';
+    document.getElementById('novel-detail-author').textContent = novel.author || '未知作者';
+    document.getElementById('novel-detail-status').textContent = getStatusText(novel.status);
+    document.getElementById('novel-detail-status').className = `novel-status status-${novel.status || 0}`;
+    document.getElementById('novel-detail-category').textContent = novel.category_name || '未分类';
+    document.getElementById('novel-detail-description').textContent = novel.description || '暂无简介';
+    document.getElementById('novel-detail-file-path').textContent = novel.file_path || '未设置文件路径';
+    document.getElementById('novel-detail-progress').textContent = '0%';
+    document.getElementById('novel-detail-last-read').textContent = '未记录';
+    document.getElementById('novel-detail-chapter-count').textContent = '--';
+    document.getElementById('novel-detail-char-count').textContent = '--';
+    document.getElementById('novel-detail-file-size').textContent = '--';
+    document.getElementById('novel-detail-file-updated').textContent = '--';
+
+    const fileStatus = document.getElementById('novel-detail-file-status');
+    fileStatus.className = 'novel-detail-status-pill checking';
+    fileStatus.textContent = '检查中';
+
+    renderNovelDetailTags(novel.tags);
+
+    document.getElementById('btn-detail-read').onclick = () => openNovelFile(novel.id);
+    document.getElementById('btn-detail-download').onclick = () => downloadNovel(novel.id);
+    document.getElementById('btn-detail-edit').onclick = () => {
+        closeModal('novel-detail-modal');
+        editNovel(novel.id);
+    };
+    document.getElementById('btn-detail-check-file').onclick = () => loadNovelDetailFileInfo(novel.id);
+}
+
+async function loadNovelDetailFileInfo(novelId) {
+    const fileStatus = document.getElementById('novel-detail-file-status');
+    fileStatus.className = 'novel-detail-status-pill checking';
+    fileStatus.textContent = '检查中';
+
+    try {
+        const fileRes = await api.get(`/api/novels/${novelId}/check-file`);
+        if (fileRes.success) {
+            const fileInfo = fileRes.data;
+            fileStatus.className = `novel-detail-status-pill ${fileInfo.file_found ? 'ok' : 'missing'}`;
+            fileStatus.textContent = fileInfo.file_found
+                ? (fileInfo.is_text_readable ? '文件正常' : '仅可下载')
+                : '文件缺失';
+            document.getElementById('novel-detail-file-path').textContent = fileInfo.actual_path || fileInfo.file_path_in_db || '未设置文件路径';
+            document.getElementById('novel-detail-file-size').textContent = formatFileSize(fileInfo.file_size);
+            document.getElementById('novel-detail-file-updated').textContent = formatDateTime(fileInfo.file_modified_at);
+        } else {
+            fileStatus.className = 'novel-detail-status-pill missing';
+            fileStatus.textContent = fileRes.message || '检查失败';
+        }
+    } catch (err) {
+        fileStatus.className = 'novel-detail-status-pill missing';
+        fileStatus.textContent = '检查失败';
+        console.error('检查小说文件失败:', err);
+    }
+
+    try {
+        const readRes = await api.get(`/api/novels/${novelId}/read`);
+        if (readRes.success) {
+            const data = readRes.data;
+            const chapterCount = data.chapters.length;
+            const progressPercent = calculateNovelReadingPercent(data.reading_progress, chapterCount);
+
+            document.getElementById('novel-detail-chapter-count').textContent = `${chapterCount} 章`;
+            document.getElementById('novel-detail-char-count').textContent = formatNumber(data.total_chars);
+            document.getElementById('novel-detail-progress').textContent = `${Math.round(progressPercent)}%`;
+            document.getElementById('novel-detail-last-read').textContent = formatDateTime(data.reading_progress?.last_read_at);
+        }
+    } catch (err) {
+        console.warn('读取小说章节统计失败:', err);
+    }
+}
+
+async function openNovelDetail(novelId) {
+    const cachedNovel = state.novels.find(novel => novel.id === novelId);
+    if (cachedNovel) {
+        renderNovelDetail(cachedNovel);
+        openModal('novel-detail-modal');
+        loadNovelDetailFileInfo(novelId);
+        return;
+    }
+
+    try {
+        const res = await api.get(`/api/novels/${novelId}`);
+        if (!res.success) {
+            showToast(res.message || '加载小说详情失败', 'error');
+            return;
+        }
+
+        renderNovelDetail(res.data);
+        openModal('novel-detail-modal');
+        loadNovelDetailFileInfo(novelId);
+    } catch (err) {
+        console.error('加载小说详情失败:', err);
+        showToast('加载小说详情失败: ' + err.message, 'error');
+    }
 }
 
 // ==================== 阅读器功能 ====================

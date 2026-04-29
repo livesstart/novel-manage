@@ -4,6 +4,7 @@
 import os
 import sqlite3
 import re
+from datetime import datetime
 from pathlib import Path
 from flask import Flask, render_template, jsonify, request, send_file
 from flask_cors import CORS
@@ -971,6 +972,23 @@ def check_novel_file(novel_id):
 
     file_path = novel['file_path']
 
+    if not file_path:
+        return jsonify({
+            'success': True,
+            'data': {
+                'file_path_in_db': file_path,
+                'current_working_dir': os.getcwd(),
+                'script_dir': os.path.dirname(os.path.abspath(__file__)),
+                'checked_paths': [],
+                'file_found': False,
+                'actual_path': None,
+                'file_size': None,
+                'file_modified_at': None,
+                'file_extension': '',
+                'is_text_readable': False
+            }
+        })
+
     # 标准化路径
     file_path_normalized = file_path.replace('/', os.sep).replace('\\\\', os.sep)
 
@@ -996,6 +1014,17 @@ def check_novel_file(novel_id):
         if exists and not actual_path:
             actual_path = path
 
+    file_size = None
+    file_modified_at = None
+    file_extension = ''
+    is_text_readable = False
+
+    if actual_path:
+        file_size = os.path.getsize(actual_path)
+        file_modified_at = datetime.fromtimestamp(os.path.getmtime(actual_path)).isoformat(timespec='seconds')
+        file_extension = Path(actual_path).suffix.lower()
+        is_text_readable = is_text_readable_file(actual_path)
+
     return jsonify({
         'success': True,
         'data': {
@@ -1004,7 +1033,11 @@ def check_novel_file(novel_id):
             'script_dir': os.path.dirname(os.path.abspath(__file__)),
             'checked_paths': results,
             'file_found': actual_path is not None,
-            'actual_path': actual_path
+            'actual_path': actual_path,
+            'file_size': file_size,
+            'file_modified_at': file_modified_at,
+            'file_extension': file_extension,
+            'is_text_readable': is_text_readable
         }
     })
 

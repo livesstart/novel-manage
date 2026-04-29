@@ -13,6 +13,7 @@ const state = {
     filterTagQuery: '',
     filterTagsExpanded: false,
     editingNovel: null,
+    detailNovel: null,
     editingCategory: null,
     editingTag: null,
     importStep: 1,
