@@ -66,7 +66,7 @@
     gap: 8px;
 }
 
-.reader-immersive-exit {
+.reader-immersive-exit.btn-icon {
     display: none;
     position: fixed;
     top: 18px;
@@ -81,7 +81,7 @@
     backdrop-filter: blur(14px);
 }
 
-.reader-immersive-exit:hover {
+.reader-immersive-exit.btn-icon:hover {
     background: #ffffff;
 }
 

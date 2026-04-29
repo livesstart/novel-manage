@@ -51,7 +51,7 @@ assert.match(appJs, /scrollReaderByPage\(-1\)/, 'keyboard shortcuts should scrol
 assert.match(appJs, /if \(e\.key === 'Escape'\) {[\s\S]*readerState\.isImmersive[\s\S]*setReaderImmersiveMode\(false\);[\s\S]*return;[\s\S]*}\s*if \(\['INPUT', 'TEXTAREA', 'SELECT', 'BUTTON'\]\.includes\(e\.target\.tagName\)\) return;/, 'Escape should exit immersive mode before focused controls suppress reader shortcuts');
 
 assert.match(readerCss, /\.reader-settings-panel/, 'reader settings panel should be styled');
-assert.match(readerCss, /\.reader-immersive-exit\s*{[^}]*display:\s*none/s, 'immersive exit control should be hidden outside immersive mode');
+assert.match(readerCss, /\.reader-immersive-exit\.btn-icon\s*{[^}]*display:\s*none/s, 'immersive exit control should use a selector specific enough to stay hidden outside immersive mode');
 assert.match(readerCss, /\.reader-modal\.immersive\s+\.reader-immersive-exit\s*{[^}]*display:\s*inline-flex/s, 'immersive exit control should be visible while immersive mode hides the header');
 assert.match(readerCss, /grid-template-columns:\s*repeat\(auto-fit,\s*minmax\(170px,\s*1fr\)\)/, 'reader settings should wrap instead of clipping in narrower main panes');
 assert.match(readerCss, /overflow-x:\s*hidden/, 'reader settings panel should prevent horizontal clipping/overflow');
