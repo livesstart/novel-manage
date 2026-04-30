@@ -451,11 +451,55 @@
     font-size: 13px;
 }
 
+.novel-detail-tabs {
+    display: inline-flex;
+    gap: 6px;
+    margin: 18px 0 16px;
+    padding: 5px;
+    border: 1px solid var(--border-color);
+    border-radius: 999px;
+    background: #f8fafc;
+}
+
+.novel-detail-tab {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    min-height: 34px;
+    padding: 7px 13px;
+    border: none;
+    border-radius: 999px;
+    background: transparent;
+    color: var(--text-secondary);
+    font-size: 13px;
+    font-weight: 700;
+    cursor: pointer;
+    transition: background 0.2s, color 0.2s, box-shadow 0.2s;
+}
+
+.novel-detail-tab:hover {
+    color: var(--primary-color);
+}
+
+.novel-detail-tab.active {
+    background: #ffffff;
+    color: var(--primary-color);
+    box-shadow: 0 8px 22px rgba(15, 23, 42, 0.08);
+}
+
+.novel-detail-panel {
+    display: none;
+}
+
+.novel-detail-panel.active {
+    display: block;
+}
+
 .novel-detail-metrics {
     display: grid;
     grid-template-columns: repeat(4, minmax(0, 1fr));
     gap: 12px;
-    margin: 20px 0;
+    margin: 0 0 20px;
 }
 
 .novel-detail-metric {
@@ -554,11 +598,13 @@
 }
 
 .novel-character-panel {
-    margin-top: 20px;
+    margin-top: 0;
     padding: 16px;
     border: 1px solid var(--border-color);
     border-radius: var(--radius);
-    background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+    background:
+        linear-gradient(135deg, rgba(99, 102, 241, 0.06), transparent 42%),
+        linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
 }
 
 .novel-character-head {
@@ -683,23 +729,41 @@
 }
 
 .novel-character-graph {
-    min-height: 260px;
+    min-height: 330px;
     margin-bottom: 12px;
-    border: 1px dashed var(--border-color);
+    border: 1px solid rgba(148, 163, 184, 0.28);
     border-radius: var(--radius);
-    background: #ffffff;
+    background:
+        radial-gradient(circle at 18px 18px, rgba(99, 102, 241, 0.08) 1px, transparent 1px),
+        linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+    background-size: 28px 28px, auto;
     overflow: hidden;
 }
 
 .novel-character-graph svg {
     display: block;
     width: 100%;
-    min-height: 260px;
+    min-height: 300px;
 }
 
 .novel-relation-line {
     stroke: #94a3b8;
     stroke-width: 2;
+    stroke-linecap: round;
+}
+
+.novel-relation-line.strength-high {
+    stroke: #4f46e5;
+    stroke-width: 3;
+}
+
+.novel-relation-line.strength-medium {
+    stroke: #0891b2;
+}
+
+.novel-relation-line.strength-low {
+    stroke: #94a3b8;
+    stroke-dasharray: 6 6;
 }
 
 .novel-relation-label {
@@ -712,10 +776,34 @@
     stroke-linejoin: round;
 }
 
+.novel-character-graph marker path {
+    fill: #64748b;
+}
+
 .novel-character-node circle {
-    fill: #eef2ff;
+    fill: url(#character-node-fill);
     stroke: #6366f1;
     stroke-width: 2;
+    filter: drop-shadow(0 10px 16px rgba(79, 70, 229, 0.18));
+}
+
+.novel-character-node .novel-character-node-halo {
+    fill: rgba(99, 102, 241, 0.08);
+    stroke: rgba(99, 102, 241, 0.12);
+    stroke-width: 1;
+    filter: none;
+}
+
+.novel-character-node.strength-high circle:not(.novel-character-node-halo) {
+    stroke: #4f46e5;
+}
+
+.novel-character-node.strength-medium circle:not(.novel-character-node-halo) {
+    stroke: #0891b2;
+}
+
+.novel-character-node.strength-low circle:not(.novel-character-node-halo) {
+    stroke: #94a3b8;
 }
 
 .novel-character-node-name {
@@ -746,6 +834,41 @@
     min-height: 64px;
 }
 
+.novel-relation-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    align-items: center;
+    padding: 0 12px 12px;
+    color: var(--text-secondary);
+    font-size: 12px;
+}
+
+.novel-relation-legend span {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.novel-relation-legend i {
+    width: 24px;
+    height: 3px;
+    border-radius: 999px;
+    background: #94a3b8;
+}
+
+.novel-relation-legend i.strength-high {
+    background: #4f46e5;
+}
+
+.novel-relation-legend i.strength-medium {
+    background: #0891b2;
+}
+
+.novel-relation-legend i.strength-low {
+    background: repeating-linear-gradient(90deg, #94a3b8 0 6px, transparent 6px 10px);
+}
+
 @media (max-width: 768px) {
     .novel-detail-hero {
         grid-template-columns: 72px 1fr;
@@ -759,6 +882,17 @@
 
     .novel-detail-main h2 {
         font-size: 22px;
+    }
+
+    .novel-detail-tabs {
+        display: flex;
+        overflow-x: auto;
+        border-radius: var(--radius);
+    }
+
+    .novel-detail-tab {
+        flex: 1 0 auto;
+        justify-content: center;
     }
 
     .novel-detail-metrics,

@@ -725,6 +725,21 @@ function renderNovelDetailTags(tags = []) {
     `).join('');
 }
 
+function switchNovelDetailTab(tabName) {
+    const targetTab = tabName || 'overview';
+    document.querySelectorAll('.novel-detail-tab').forEach(tab => {
+        const isActive = tab.dataset.detailTab === targetTab;
+        tab.classList.toggle('active', isActive);
+        tab.setAttribute('aria-selected', String(isActive));
+    });
+
+    document.querySelectorAll('.novel-detail-panel').forEach(panel => {
+        const isActive = panel.dataset.detailPanel === targetTab;
+        panel.classList.toggle('active', isActive);
+        panel.hidden = !isActive;
+    });
+}
+
 function resetNovelCharacterAnalysis() {
     state.detailCharacterAnalysis = null;
     document.getElementById('novel-character-status').textContent = '尚未分析';
@@ -743,6 +758,13 @@ function renderCharacterBadges(items = []) {
     `;
 }
 
+function getRelationStrength(confidence) {
+    const number = Number(confidence);
+    if (Number.isFinite(number) && number >= 0.78) return 'high';
+    if (Number.isFinite(number) && number >= 0.48) return 'medium';
+    return 'low';
+}
+
 function renderCharacterRelationshipGraph(characters = [], relations = []) {
     const graph = document.getElementById('novel-character-graph');
     if (!Array.isArray(characters) || characters.length === 0) {
@@ -750,18 +772,19 @@ function renderCharacterRelationshipGraph(characters = [], relations = []) {
         return;
     }
 
-    const width = 520;
-    const height = 320;
+    const width = 640;
+    const height = 380;
     const centerX = width / 2;
     const centerY = height / 2;
-    const radius = characters.length === 1 ? 0 : 112;
+    const radius = characters.length === 1 ? 0 : Math.min(146, 78 + characters.length * 10);
     const nodePositions = new Map();
 
     characters.forEach((character, index) => {
         const angle = characters.length === 1 ? 0 : (Math.PI * 2 * index) / characters.length - Math.PI / 2;
+        const offset = index % 2 === 0 ? 0 : 12;
         nodePositions.set(character.id, {
-            x: centerX + Math.cos(angle) * radius,
-            y: centerY + Math.sin(angle) * radius
+            x: centerX + Math.cos(angle) * (radius + offset),
+            y: centerY + Math.sin(angle) * (radius + offset)
         });
     });
 
@@ -770,10 +793,24 @@ function renderCharacterRelationshipGraph(characters = [], relations = []) {
             const source = nodePositions.get(relation.source_character_id);
             const target = nodePositions.get(relation.target_character_id);
             if (!source || !target) return '';
-            const midX = (source.x + target.x) / 2;
-            const midY = (source.y + target.y) / 2;
+            const dx = target.x - source.x;
+            const dy = target.y - source.y;
+            const distance = Math.max(Math.sqrt(dx * dx + dy * dy), 1);
+            const unitX = dx / distance;
+            const unitY = dy / distance;
+            const sourceEdge = {
+                x: source.x + unitX * 42,
+                y: source.y + unitY * 42
+            };
+            const targetEdge = {
+                x: target.x - unitX * 46,
+                y: target.y - unitY * 46
+            };
+            const midX = (sourceEdge.x + targetEdge.x) / 2;
+            const midY = (sourceEdge.y + targetEdge.y) / 2;
+            const strength = getRelationStrength(relation.confidence);
             return `
-                <line x1="${source.x}" y1="${source.y}" x2="${target.x}" y2="${target.y}" class="novel-relation-line"></line>
+                <line x1="${sourceEdge.x}" y1="${sourceEdge.y}" x2="${targetEdge.x}" y2="${targetEdge.y}" class="novel-relation-line strength-${strength}" marker-end="url(#relation-arrow)"></line>
                 <text x="${midX}" y="${midY - 6}" class="novel-relation-label">${escapeHtml(relation.relation_type || '相关')}</text>
             `;
         })
@@ -782,8 +819,10 @@ function renderCharacterRelationshipGraph(characters = [], relations = []) {
     const nodes = characters.map(character => {
         const position = nodePositions.get(character.id);
         const initials = String(character.name || '?').slice(0, 2);
+        const strength = getRelationStrength(character.confidence);
         return `
-            <g class="novel-character-node" transform="translate(${position.x}, ${position.y})">
+            <g class="novel-character-node strength-${strength}" transform="translate(${position.x}, ${position.y})">
+                <circle class="novel-character-node-halo" r="45"></circle>
                 <circle r="34"></circle>
                 <text class="novel-character-node-name" text-anchor="middle" y="5">${escapeHtml(initials)}</text>
                 <text class="novel-character-node-role" text-anchor="middle" y="52">${escapeHtml(character.role_type || '角色')}</text>
@@ -793,9 +832,23 @@ function renderCharacterRelationshipGraph(characters = [], relations = []) {
 
     graph.innerHTML = `
         <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="角色关系谱">
+            <defs>
+                <marker id="relation-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                    <path d="M 0 0 L 10 5 L 0 10 z"></path>
+                </marker>
+                <radialGradient id="character-node-fill" cx="38%" cy="28%" r="70%">
+                    <stop offset="0%" stop-color="#ffffff"></stop>
+                    <stop offset="100%" stop-color="#dbeafe"></stop>
+                </radialGradient>
+            </defs>
             ${relationLines}
             ${nodes}
         </svg>
+        <div class="novel-relation-legend">
+            <span><i class="strength-high"></i>高可信</span>
+            <span><i class="strength-medium"></i>中可信</span>
+            <span><i class="strength-low"></i>低可信</span>
+        </div>
     `;
 }
 
@@ -887,6 +940,7 @@ async function analyzeNovelCharactersWithAI(novelId) {
         }
 
         renderNovelCharacterAnalysis(res.data);
+        switchNovelDetailTab('characters');
         showToast(`已识别 ${res.data.character_count} 个角色、${res.data.relation_count} 条关系`, 'success');
     } catch (err) {
         console.error('AI 分析角色关系失败:', err);
@@ -928,6 +982,7 @@ function renderNovelDetail(novel) {
     fileStatus.textContent = '检查中';
 
     resetNovelCharacterAnalysis();
+    switchNovelDetailTab('overview');
     renderNovelDetailTags(novel.tags);
 
     document.getElementById('btn-detail-read').onclick = () => openNovelFile(novel.id);
@@ -938,6 +993,9 @@ function renderNovelDetail(novel) {
     };
     document.getElementById('btn-detail-check-file').onclick = () => loadNovelDetailFileInfo(novel.id);
     document.getElementById('btn-detail-analyze-characters').onclick = () => analyzeNovelCharactersWithAI(novel.id);
+    document.querySelectorAll('.novel-detail-tab').forEach(tab => {
+        tab.onclick = () => switchNovelDetailTab(tab.dataset.detailTab);
+    });
 }
 
 async function loadNovelDetailFileInfo(novelId) {

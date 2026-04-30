@@ -457,76 +457,99 @@
                     </div>
                 </div>
 
-                <div class="novel-detail-metrics">
-                    <div class="novel-detail-metric">
-                        <span>阅读进度</span>
-                        <strong id="novel-detail-progress">0%</strong>
-                    </div>
-                    <div class="novel-detail-metric">
-                        <span>最近阅读</span>
-                        <strong id="novel-detail-last-read">未记录</strong>
-                    </div>
-                    <div class="novel-detail-metric">
-                        <span>章节数</span>
-                        <strong id="novel-detail-chapter-count">--</strong>
-                    </div>
-                    <div class="novel-detail-metric">
-                        <span>字数</span>
-                        <strong id="novel-detail-char-count">--</strong>
-                    </div>
+                <div class="novel-detail-tabs" id="novel-detail-tabs" role="tablist" aria-label="小说详情内容">
+                    <button class="novel-detail-tab active" id="novel-detail-tab-overview" type="button" role="tab" aria-selected="true" data-detail-tab="overview">
+                        <i class="fas fa-chart-simple"></i>
+                        概览
+                    </button>
+                    <button class="novel-detail-tab" id="novel-detail-tab-file" type="button" role="tab" aria-selected="false" data-detail-tab="file">
+                        <i class="fas fa-file-lines"></i>
+                        本地文件
+                    </button>
+                    <button class="novel-detail-tab" id="novel-detail-tab-characters" type="button" role="tab" aria-selected="false" data-detail-tab="characters">
+                        <i class="fas fa-diagram-project"></i>
+                        角色关系
+                    </button>
                 </div>
 
-                <div class="novel-detail-section">
-                    <h4>简介</h4>
-                    <p class="novel-detail-description" id="novel-detail-description">暂无简介</p>
-                </div>
-
-                <div class="novel-detail-file-card">
-                    <div class="novel-detail-file-head">
-                        <div>
-                            <h4>本地文件</h4>
-                            <p id="novel-detail-file-path">未设置文件路径</p>
-                        </div>
-                        <span class="novel-detail-status-pill checking" id="novel-detail-file-status">待检查</span>
-                    </div>
-                    <div class="novel-detail-file-grid">
-                        <div>
-                            <span>文件大小</span>
-                            <strong id="novel-detail-file-size">--</strong>
-                        </div>
-                        <div>
-                            <span>修改时间</span>
-                            <strong id="novel-detail-file-updated">--</strong>
-                        </div>
-                    </div>
-                </div>
-
-                <div class="novel-character-panel" id="novel-character-panel">
-                    <div class="novel-character-head">
-                        <div>
-                            <h4>角色关系</h4>
-                            <p id="novel-character-status">尚未分析</p>
-                        </div>
-                        <button class="btn btn-sm btn-secondary" id="btn-detail-analyze-characters">
-                            <i class="fas fa-diagram-project"></i>
-                            AI 分析角色
-                        </button>
-                    </div>
-                    <div class="novel-character-layout">
-                        <div class="novel-character-column">
-                            <div class="novel-character-column-title">角色</div>
-                            <div class="novel-character-list" id="novel-character-list">
-                                <div class="novel-character-empty">暂无角色数据</div>
+                <div class="novel-detail-panels">
+                    <section class="novel-detail-panel active" id="novel-detail-panel-overview" role="tabpanel" data-detail-panel="overview">
+                        <div class="novel-detail-metrics">
+                            <div class="novel-detail-metric">
+                                <span>阅读进度</span>
+                                <strong id="novel-detail-progress">0%</strong>
+                            </div>
+                            <div class="novel-detail-metric">
+                                <span>最近阅读</span>
+                                <strong id="novel-detail-last-read">未记录</strong>
+                            </div>
+                            <div class="novel-detail-metric">
+                                <span>章节数</span>
+                                <strong id="novel-detail-chapter-count">--</strong>
+                            </div>
+                            <div class="novel-detail-metric">
+                                <span>字数</span>
+                                <strong id="novel-detail-char-count">--</strong>
                             </div>
                         </div>
-                        <div class="novel-character-column novel-character-graph-column">
-                            <div class="novel-character-column-title">关系谱</div>
-                            <div class="novel-character-graph" id="novel-character-graph">
-                                <div class="novel-character-empty">分析后会生成关系图</div>
-                            </div>
-                            <div class="novel-character-relations" id="novel-character-relations"></div>
+
+                        <div class="novel-detail-section">
+                            <h4>简介</h4>
+                            <p class="novel-detail-description" id="novel-detail-description">暂无简介</p>
                         </div>
-                    </div>
+                    </section>
+
+                    <section class="novel-detail-panel" id="novel-detail-panel-file" role="tabpanel" data-detail-panel="file" hidden>
+                        <div class="novel-detail-file-card">
+                            <div class="novel-detail-file-head">
+                                <div>
+                                    <h4>本地文件</h4>
+                                    <p id="novel-detail-file-path">未设置文件路径</p>
+                                </div>
+                                <span class="novel-detail-status-pill checking" id="novel-detail-file-status">待检查</span>
+                            </div>
+                            <div class="novel-detail-file-grid">
+                                <div>
+                                    <span>文件大小</span>
+                                    <strong id="novel-detail-file-size">--</strong>
+                                </div>
+                                <div>
+                                    <span>修改时间</span>
+                                    <strong id="novel-detail-file-updated">--</strong>
+                                </div>
+                            </div>
+                        </div>
+                    </section>
+
+                    <section class="novel-detail-panel" id="novel-detail-panel-characters" role="tabpanel" data-detail-panel="characters" hidden>
+                        <div class="novel-character-panel" id="novel-character-panel">
+                            <div class="novel-character-head">
+                                <div>
+                                    <h4>角色关系</h4>
+                                    <p id="novel-character-status">尚未分析</p>
+                                </div>
+                                <button class="btn btn-sm btn-secondary" id="btn-detail-analyze-characters">
+                                    <i class="fas fa-diagram-project"></i>
+                                    AI 分析角色
+                                </button>
+                            </div>
+                            <div class="novel-character-layout">
+                                <div class="novel-character-column">
+                                    <div class="novel-character-column-title">角色</div>
+                                    <div class="novel-character-list" id="novel-character-list">
+                                        <div class="novel-character-empty">暂无角色数据</div>
+                                    </div>
+                                </div>
+                                <div class="novel-character-column novel-character-graph-column">
+                                    <div class="novel-character-column-title">关系谱</div>
+                                    <div class="novel-character-graph" id="novel-character-graph">
+                                        <div class="novel-character-empty">分析后会生成关系图</div>
+                                    </div>
+                                    <div class="novel-character-relations" id="novel-character-relations"></div>
+                                </div>
+                            </div>
+                        </div>
+                    </section>
                 </div>
             </div>
             <div class="modal-footer">
