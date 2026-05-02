@@ -8,6 +8,8 @@ import sqlite3
 from abc import ABC, abstractmethod
 from typing import Optional, List, Dict, Any, Generator
 
+from db_utils import connect_database, enable_wal
+
 DATABASE = 'novels.db'
 GEMINI_NATIVE_BASE_URL = 'https://generativelanguage.googleapis.com/v1beta/'
 GEMINI_OPENAI_BASE_URL = 'https://generativelanguage.googleapis.com/v1beta/openai/'
@@ -456,14 +458,13 @@ class AIConfig:
 
     @staticmethod
     def get_db():
-        conn = sqlite3.connect(DATABASE)
-        conn.row_factory = sqlite3.Row
-        return conn
+        return connect_database(DATABASE)
 
     @staticmethod
     def init_table():
         """初始化 AI 配置表"""
         conn = AIConfig.get_db()
+        enable_wal(conn)
         cursor = conn.cursor()
 
         cursor.execute('''

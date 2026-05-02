@@ -73,12 +73,6 @@ function bindEvents() {
             applyFilters();
         }, 300);
     });
-    document.getElementById('full-text-search-toggle').addEventListener('change', (e) => {
-        const searchInput = document.getElementById('search-input');
-        searchInput.placeholder = e.target.checked ? '搜索正文关键词...' : '搜索小说名称或作者...';
-        applyFilters();
-    });
-
     // 筛选器
     document.getElementById('filter-category').addEventListener('change', applyFilters);
     document.getElementById('filter-status').addEventListener('change', applyFilters);

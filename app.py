@@ -9,7 +9,7 @@ from pathlib import Path
 from flask import Flask, render_template, jsonify, request, send_file
 from flask_cors import CORS
 
-from search_routes import ensure_full_text_search_schema, register_search_routes
+from db_utils import connect_database, enable_wal
 
 
 app = Flask(__name__, static_folder='static', template_folder='templates')
@@ -18,10 +18,7 @@ CORS(app)
 DATABASE = 'novels.db'
 def get_db():
     """获取数据库连接"""
-    conn = sqlite3.connect(DATABASE)
-    conn.row_factory = sqlite3.Row
-    conn.execute('PRAGMA foreign_keys = ON')
-    return conn
+    return connect_database(DATABASE, foreign_keys=True)
 
 
 def _ensure_table_columns(cursor, table_name, required_columns):
@@ -44,6 +41,7 @@ def _ensure_novel_schema(cursor):
 def init_db():
     """初始化数据库"""
     conn = get_db()
+    enable_wal(conn)
     cursor = conn.cursor()
     UPLOAD_ROOT.mkdir(parents=True, exist_ok=True)
 
@@ -99,7 +97,6 @@ def init_db():
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_novels_category_status_updated ON novels(category_id, status, updated_at DESC)')
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_novel_tags_tag_novel ON novel_tags(tag_id, novel_id)')
     _ensure_novel_schema(cursor)
-    ensure_full_text_search_schema(cursor)
     cursor.execute('''
         DELETE FROM novel_tags
         WHERE novel_id NOT IN (SELECT id FROM novels)
@@ -277,17 +274,6 @@ def _serialize_reading_progress(novel, chapter_count=None):
         'scroll_percent': max(0, min(scroll_percent, 100)),
         'last_read_at': novel.get('last_read_at')
     }
-
-
-register_search_routes(
-    app,
-    get_db=get_db,
-    resolve_novel_file_path=resolve_novel_file_path,
-    is_text_readable_file=is_text_readable_file,
-    detect_encoding=detect_encoding,
-    parse_chapters=parse_chapters,
-    normalize_novel_ids=_normalize_novel_ids,
-)
 
 
 @app.route('/api/novels/<int:novel_id>/read', methods=['GET'])
