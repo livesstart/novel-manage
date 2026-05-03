@@ -56,6 +56,7 @@ instance/
 *.tmp
 *.bak
 *.orig
+.worktrees/
 .playwright-mcp/
 novel-card-after.png
 novel-card-mobile-after.png
