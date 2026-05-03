@@ -5,6 +5,7 @@ const path = require('node:path');
 const root = path.resolve(__dirname, '..');
 const template = fs.readFileSync(path.join(root, 'templates/index.html'), 'utf8');
 const novelsJs = fs.readFileSync(path.join(root, 'static/js/novels.js'), 'utf8');
+const coreJs = fs.readFileSync(path.join(root, 'static/js/core.js'), 'utf8');
 const novelsCss = fs.readFileSync(path.join(root, 'static/css/novels.css'), 'utf8');
 
 const requiredTemplateIds = [
@@ -46,6 +47,18 @@ assert.match(novelsJs, /\/api\/ai\/novels\/\$\{novelId\}\/characters\/analyze/, 
 assert.match(novelsJs, /<defs>[\s\S]*marker/, 'relationship graph should define arrow markers');
 assert.match(novelsJs, /novel-relation-legend/, 'relationship graph should render a legend');
 assert.match(novelsJs, /novel-relation-line strength-/, 'relationship graph should style relation confidence');
+assert.match(template, /\u751f\u6210\u540e\u4f1a\u5c55\u793a\u5173\u7cfb\u8c31/, 'template graph empty state should use role-card copy');
+assert.doesNotMatch(template, /\u5206\u6790\u540e\u4f1a\u751f\u6210\u5173\u7cfb\u56fe/, 'template should not use stale relationship-analysis graph empty copy');
+assert.match(novelsJs, /\u6682\u65e0\u89d2\u8272\u5361\u6570\u636e/, 'character graph/list empty states should use role-card copy');
+assert.match(novelsJs, /\u89d2\u8272\u5361\u6570\u636e\u52a0\u8f7d\u5931\u8d25/, 'character-card load failure should use role-card copy');
+assert.match(novelsJs, /\u52a0\u8f7d\u89d2\u8272\u5361\u6570\u636e\u5931\u8d25:/, 'character-card load warning should use role-card copy');
+assert.doesNotMatch(novelsJs, /\u52a0\u8f7d\u89d2\u8272\u5173\u7cfb\u5206\u6790\u5931\u8d25|'\u89d2\u8272\u6570\u636e\u52a0\u8f7d\u5931\u8d25'|\u6682\u65e0\u89d2\u8272\u6570\u636e/, 'role-card flow should not use stale role/relationship-analysis copy');
+
+const showToastMatch = coreJs.match(/function showToast\(message, type = 'success'\) \{[\s\S]*?\n\}/);
+assert.ok(showToastMatch, 'core should define showToast');
+const showToastBody = showToastMatch[0];
+assert.match(showToastBody, /\.textContent\s*=\s*message/, 'showToast should render the message with textContent');
+assert.doesNotMatch(showToastBody, /innerHTML\s*=\s*`[\s\S]*\$\{message\}/, 'showToast should not interpolate message into innerHTML');
 
 assert.match(novelsCss, /\.novel-detail-tabs/, 'detail tabs should be styled');
 assert.match(novelsCss, /\.novel-detail-tab/, 'detail tab buttons should be styled');

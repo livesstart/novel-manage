@@ -100,10 +100,14 @@ function getStatusText(status) {
 function showToast(message, type = 'success') {
     const toast = document.createElement('div');
     toast.className = `toast ${type}`;
-    toast.innerHTML = `
-        <i class="fas fa-${type === 'success' ? 'check-circle' : 'exclamation-circle'}"></i>
-        <span>${message}</span>
-    `;
+
+    const icon = document.createElement('i');
+    icon.className = `fas fa-${type === 'success' ? 'check-circle' : 'exclamation-circle'}`;
+
+    const messageEl = document.createElement('span');
+    messageEl.textContent = message;
+
+    toast.append(icon, messageEl);
     document.body.appendChild(toast);
 
     setTimeout(() => {

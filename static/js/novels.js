@@ -675,7 +675,7 @@ function getRelationStrength(confidence) {
 function renderCharacterRelationshipGraph(characters = [], relations = []) {
     const graph = document.getElementById('novel-character-graph');
     if (!Array.isArray(characters) || characters.length === 0) {
-        graph.innerHTML = '<div class="novel-character-empty">暂无角色数据</div>';
+        graph.innerHTML = '<div class="novel-character-empty">暂无角色卡数据</div>';
         return;
     }
 
@@ -830,13 +830,13 @@ async function loadNovelCharacterAnalysis(novelId) {
     try {
         const res = await api.get(`/api/novels/${novelId}/characters`);
         if (!res.success) {
-            document.getElementById('novel-character-status').textContent = res.message || '角色数据加载失败';
+            document.getElementById('novel-character-status').textContent = res.message || '角色卡数据加载失败';
             return;
         }
         renderNovelCharacterAnalysis(res.data);
     } catch (err) {
-        console.warn('加载角色关系分析失败:', err);
-        document.getElementById('novel-character-status').textContent = '角色数据加载失败';
+        console.warn('加载角色卡数据失败:', err);
+        document.getElementById('novel-character-status').textContent = '角色卡数据加载失败';
     }
 }
 
