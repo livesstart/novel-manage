@@ -169,6 +169,117 @@ class CharacterAnalysisTest(unittest.TestCase):
         self.assertEqual(character['profile']['personality'], ['谨慎'])
         self.assertEqual(character['profile']['first_seen'], '第 1 章')
 
+    def test_existing_character_table_without_profile_json_is_migrated_and_serialized(self):
+        legacy_database = os.path.join(self.tmpdir.name, 'legacy-profile-migration.db')
+        novel_app.DATABASE = legacy_database
+
+        conn = sqlite3.connect(legacy_database)
+        cursor = conn.cursor()
+        cursor.execute('''
+            CREATE TABLE categories (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL UNIQUE,
+                description TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        cursor.execute('''
+            CREATE TABLE novels (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                title TEXT NOT NULL,
+                author TEXT,
+                description TEXT,
+                file_path TEXT,
+                category_id INTEGER,
+                cover_path TEXT,
+                status INTEGER DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        cursor.execute('''
+            CREATE TABLE tags (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL UNIQUE,
+                color TEXT DEFAULT '#3498db',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        cursor.execute('''
+            CREATE TABLE novel_tags (
+                novel_id INTEGER,
+                tag_id INTEGER,
+                PRIMARY KEY (novel_id, tag_id)
+            )
+        ''')
+        cursor.execute('''
+            CREATE TABLE novel_characters (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                novel_id INTEGER NOT NULL,
+                name TEXT NOT NULL,
+                aliases_json TEXT DEFAULT '[]',
+                role_type TEXT,
+                description TEXT,
+                traits_json TEXT DEFAULT '[]',
+                first_chapter_index INTEGER,
+                evidence TEXT,
+                confidence REAL DEFAULT 0,
+                sort_order INTEGER DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE (novel_id, name)
+            )
+        ''')
+        cursor.execute(
+            'INSERT INTO novels (title, author, description, status) VALUES (?, ?, ?, ?)',
+            ('旧库角色卡测试', '旧库作者', '旧库简介', 1)
+        )
+        novel_id = cursor.lastrowid
+        cursor.execute('''
+            INSERT INTO novel_characters (
+                novel_id, name, aliases_json, role_type, description,
+                traits_json, first_chapter_index, evidence, confidence, sort_order
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (
+            novel_id,
+            '旧库角色',
+            json.dumps(['旧称'], ensure_ascii=False),
+            '配角',
+            '旧库中的角色说明。',
+            json.dumps(['可靠', '沉稳'], ensure_ascii=False),
+            2,
+            '旧库角色在第三章现身。',
+            0.66,
+            0,
+        ))
+
+        ai_routes.ensure_character_analysis_schema(cursor)
+        ai_routes.ensure_character_analysis_schema(cursor)
+        cursor.execute('PRAGMA table_info(novel_characters)')
+        character_columns = {row[1] for row in cursor.fetchall()}
+        conn.commit()
+        conn.close()
+
+        self.assertIn('profile_json', character_columns)
+
+        response = self.client.get(f'/api/novels/{novel_id}/characters')
+        payload = response.get_json()
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(payload['success'])
+        self.assertEqual(payload['data']['character_count'], 1)
+        character = payload['data']['characters'][0]
+        self.assertEqual(character['name'], '旧库角色')
+        self.assertEqual(character['aliases'], ['旧称'])
+        self.assertEqual(character['traits'], ['可靠', '沉稳'])
+        self.assertEqual(character['profile']['summary'], '旧库中的角色说明。')
+        self.assertEqual(character['profile']['appearance'], '')
+        self.assertEqual(character['profile']['personality'], ['可靠', '沉稳'])
+        self.assertEqual(character['profile']['motivation'], '')
+        self.assertEqual(character['profile']['skills'], [])
+        self.assertEqual(character['profile']['first_seen'], '第 3 章')
+        self.assertEqual(character['profile']['card_evidence'], '旧库角色在第三章现身。')
+
     def test_character_analysis_requires_existing_novel(self):
         response = self.client.post('/api/ai/novels/99999/characters/analyze')
         payload = response.get_json()
