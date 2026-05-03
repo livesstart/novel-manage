@@ -516,6 +516,53 @@
     line-height: 1.6;
 }
 
+.novel-character-card-summary {
+    color: var(--text-primary);
+    font-weight: 600;
+}
+
+.novel-character-profile-grid {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 8px;
+    margin: 10px 0;
+}
+
+.novel-character-profile-item {
+    display: grid;
+    gap: 4px;
+    padding: 8px 10px;
+    border-radius: var(--radius);
+    background: #f8fafc;
+}
+
+.novel-character-profile-item > span {
+    color: var(--text-secondary);
+    font-size: 12px;
+    font-weight: 700;
+}
+
+.novel-character-profile-item > strong {
+    color: var(--text-primary);
+    font-size: 13px;
+    font-weight: 600;
+    line-height: 1.5;
+}
+
+.novel-character-profile-item .tag-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.novel-character-profile-item .tag-list span {
+    padding: 2px 7px;
+    border-radius: 999px;
+    background: #fef3c7;
+    color: #92400e;
+    font-size: 12px;
+}
+
 .novel-character-alias,
 .novel-character-confidence {
     color: var(--text-secondary);

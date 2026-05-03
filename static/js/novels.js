@@ -612,10 +612,10 @@ function switchNovelDetailTab(tabName) {
 
 function resetNovelCharacterAnalysis() {
     state.detailCharacterAnalysis = null;
-    document.getElementById('novel-character-status').textContent = '尚未分析';
+    document.getElementById('novel-character-status').textContent = '尚未生成角色卡';
     document.getElementById('novel-character-status').className = '';
-    document.getElementById('novel-character-list').innerHTML = '<div class="novel-character-empty">暂无角色数据</div>';
-    document.getElementById('novel-character-graph').innerHTML = '<div class="novel-character-empty">分析后会生成关系图</div>';
+    document.getElementById('novel-character-list').innerHTML = '<div class="novel-character-empty">暂无角色卡数据</div>';
+    document.getElementById('novel-character-graph').innerHTML = '<div class="novel-character-empty">生成后会展示关系谱</div>';
     document.getElementById('novel-character-relations').innerHTML = '';
 }
 
@@ -624,6 +624,43 @@ function renderCharacterBadges(items = []) {
     return `
         <div class="novel-character-badges">
             ${items.map(item => `<span>${escapeHtml(item)}</span>`).join('')}
+        </div>
+    `;
+}
+
+function getCharacterProfile(character) {
+    character = character || {};
+    const profile = character.profile && typeof character.profile === 'object' ? character.profile : {};
+    const firstSeen = profile.first_seen || (
+        Number.isInteger(character.first_chapter_index) ? `第 ${character.first_chapter_index + 1} 章` : ''
+    );
+
+    return {
+        summary: profile.summary || character.description || '暂无角色定位',
+        appearance: profile.appearance || '',
+        personality: Array.isArray(profile.personality) && profile.personality.length
+            ? profile.personality
+            : (Array.isArray(character.traits) ? character.traits : []),
+        motivation: profile.motivation || '',
+        skills: Array.isArray(profile.skills) ? profile.skills : [],
+        firstSeen,
+        cardEvidence: profile.card_evidence || character.evidence || '',
+    };
+}
+
+function renderCharacterProfileMeta(label, value) {
+    const hasArrayValue = Array.isArray(value) && value.length > 0;
+    const hasTextValue = !Array.isArray(value) && value;
+    if (!hasArrayValue && !hasTextValue) return '';
+
+    const content = Array.isArray(value)
+        ? value.map(item => `<span>${escapeHtml(item)}</span>`).join('')
+        : escapeHtml(value);
+
+    return `
+        <div class="novel-character-profile-item">
+            <span>${escapeHtml(label)}</span>
+            <strong${Array.isArray(value) ? ' class="tag-list"' : ''}>${content}</strong>
         </div>
     `;
 }
@@ -730,33 +767,42 @@ function renderNovelCharacterAnalysis(analysis) {
     const statusEl = document.getElementById('novel-character-status');
 
     if (status === 'failed') {
-        statusEl.textContent = analysis.error_message || '上次分析失败';
+        statusEl.textContent = analysis.error_message || '上次生成失败';
         statusEl.className = 'failed';
     } else if (characters.length > 0 || relations.length > 0) {
-        statusEl.textContent = `已识别 ${characters.length} 个角色、${relations.length} 条关系`;
+        statusEl.textContent = `已生成 ${characters.length} 张角色卡、${relations.length} 条关系`;
         statusEl.className = 'completed';
     } else {
-        statusEl.textContent = '尚未分析';
+        statusEl.textContent = '尚未生成角色卡';
         statusEl.className = '';
     }
 
     const list = document.getElementById('novel-character-list');
     if (characters.length === 0) {
-        list.innerHTML = '<div class="novel-character-empty">暂无角色数据</div>';
+        list.innerHTML = '<div class="novel-character-empty">暂无角色卡数据</div>';
     } else {
-        list.innerHTML = characters.map(character => `
-            <article class="novel-character-card">
-                <div class="novel-character-card-head">
-                    <strong>${escapeHtml(character.name)}</strong>
-                    <span>${escapeHtml(character.role_type || '角色')}</span>
-                </div>
-                ${character.aliases?.length ? `<div class="novel-character-alias">别名：${escapeHtml(character.aliases.join('、'))}</div>` : ''}
-                <p>${escapeHtml(character.description || '暂无说明')}</p>
-                ${renderCharacterBadges(character.traits)}
-                <div class="novel-character-evidence">${escapeHtml(character.evidence || '暂无证据片段')}</div>
-                <div class="novel-character-confidence">可信度 ${formatConfidence(character.confidence)}</div>
-            </article>
-        `).join('');
+        list.innerHTML = characters.map(character => {
+            const profile = getCharacterProfile(character);
+            return `
+                <article class="novel-character-card">
+                    <div class="novel-character-card-head">
+                        <strong>${escapeHtml(character.name)}</strong>
+                        <span>${escapeHtml(character.role_type || '角色')}</span>
+                    </div>
+                    ${character.aliases?.length ? `<div class="novel-character-alias">别名：${escapeHtml(character.aliases.join('、'))}</div>` : ''}
+                    <p class="novel-character-card-summary">${escapeHtml(profile.summary)}</p>
+                    ${renderCharacterBadges(profile.personality)}
+                    <div class="novel-character-profile-grid">
+                        ${renderCharacterProfileMeta('气质', profile.appearance)}
+                        ${renderCharacterProfileMeta('动机', profile.motivation)}
+                        ${renderCharacterProfileMeta('能力', profile.skills)}
+                        ${renderCharacterProfileMeta('首次出现', profile.firstSeen)}
+                    </div>
+                    <div class="novel-character-evidence">${escapeHtml(profile.cardEvidence || '暂无证据片段')}</div>
+                    <div class="novel-character-confidence">可信度 ${formatConfidence(character.confidence)}</div>
+                </article>
+            `;
+        }).join('');
     }
 
     renderCharacterRelationshipGraph(characters, relations);
@@ -798,23 +844,23 @@ async function analyzeNovelCharactersWithAI(novelId) {
     const button = document.getElementById('btn-detail-analyze-characters');
     const originalHtml = button.innerHTML;
     button.disabled = true;
-    button.innerHTML = '<span class="loading"></span> 分析中';
-    document.getElementById('novel-character-status').textContent = 'AI 正在分析角色关系...';
+    button.innerHTML = '<span class="loading"></span> 生成中';
+    document.getElementById('novel-character-status').textContent = 'AI 正在生成角色卡...';
 
     try {
         const res = await api.post(`/api/ai/novels/${novelId}/characters/analyze`, {});
         if (!res.success) {
-            showToast(res.message || '角色分析失败', 'error');
+            showToast(res.message || '角色卡生成失败', 'error');
             await loadNovelCharacterAnalysis(novelId);
             return;
         }
 
         renderNovelCharacterAnalysis(res.data);
         switchNovelDetailTab('characters');
-        showToast(`已识别 ${res.data.character_count} 个角色、${res.data.relation_count} 条关系`, 'success');
+        showToast(`已生成 ${res.data.character_count} 张角色卡、${res.data.relation_count} 条关系`, 'success');
     } catch (err) {
-        console.error('AI 分析角色关系失败:', err);
-        showToast('AI 分析角色关系失败: ' + err.message, 'error');
+        console.error('AI 生成角色卡失败:', err);
+        showToast('AI 生成角色卡失败: ' + err.message, 'error');
     } finally {
         button.disabled = false;
         button.innerHTML = originalHtml;
