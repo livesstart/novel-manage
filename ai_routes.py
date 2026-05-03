@@ -51,6 +51,10 @@ def ensure_character_analysis_schema(cursor):
             FOREIGN KEY (novel_id) REFERENCES novels(id) ON DELETE CASCADE
         )
     ''')
+    cursor.execute('PRAGMA table_info(novel_characters)')
+    character_columns = {row[1] for row in cursor.fetchall()}
+    if 'profile_json' not in character_columns:
+        cursor.execute("ALTER TABLE novel_characters ADD COLUMN profile_json TEXT DEFAULT '{}'")
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS novel_character_relations (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -192,6 +196,16 @@ def register_ai_routes(app, *, get_db, resolve_novel_file_path, is_text_readable
             return []
 
 
+    def parse_json_dict(value):
+        if not value:
+            return {}
+        try:
+            loaded = json.loads(value)
+            return loaded if isinstance(loaded, dict) else {}
+        except (TypeError, json.JSONDecodeError):
+            return {}
+
+
     def clamp_confidence(value):
         try:
             number = float(value)
@@ -231,6 +245,23 @@ def register_ai_routes(app, *, get_db, resolve_novel_file_path, is_text_readable
         return normalized
 
 
+    def normalize_character_profile(item, *, description='', traits=None, first_chapter_index=None, evidence=''):
+        traits = traits or []
+        first_seen = normalize_short_text(item.get('first_seen'), max_length=180)
+        if not first_seen and first_chapter_index is not None:
+            first_seen = f'第 {first_chapter_index + 1} 章'
+
+        return {
+            'summary': normalize_short_text(item.get('summary') or description, max_length=120),
+            'appearance': normalize_short_text(item.get('appearance'), max_length=180),
+            'personality': normalize_string_list(item.get('personality') or traits, max_items=8, max_length=18),
+            'motivation': normalize_short_text(item.get('motivation'), max_length=180),
+            'skills': normalize_string_list(item.get('skills'), max_items=8, max_length=18),
+            'first_seen': first_seen,
+            'card_evidence': normalize_short_text(item.get('card_evidence') or evidence, max_length=180),
+        }
+
+
     def normalize_character_analysis_payload(payload):
         raw_characters = payload.get('characters') if isinstance(payload, dict) else []
         raw_relations = payload.get('relations') if isinstance(payload, dict) else []
@@ -252,15 +283,27 @@ def register_ai_routes(app, *, get_db, resolve_novel_file_path, is_text_readable
             except (TypeError, ValueError):
                 first_chapter_index = None
 
+            description = normalize_short_text(item.get('description'), max_length=260)
+            traits = normalize_string_list(item.get('traits') or item.get('personality'), max_items=8, max_length=18)
+            evidence = normalize_short_text(item.get('evidence'), max_length=220)
+            profile = normalize_character_profile(
+                item,
+                description=description,
+                traits=traits,
+                first_chapter_index=first_chapter_index if first_chapter_index is None or first_chapter_index >= 0 else None,
+                evidence=evidence,
+            )
+
             character = {
                 'name': name,
                 'aliases': normalize_string_list(item.get('aliases'), max_items=6, max_length=24),
                 'role_type': normalize_short_text(item.get('role_type'), max_length=32),
-                'description': normalize_short_text(item.get('description'), max_length=260),
-                'traits': normalize_string_list(item.get('traits'), max_items=8, max_length=18),
+                'description': description,
+                'traits': traits,
                 'first_chapter_index': first_chapter_index if first_chapter_index is None or first_chapter_index >= 0 else None,
-                'evidence': normalize_short_text(item.get('evidence'), max_length=220),
+                'evidence': evidence,
                 'confidence': clamp_confidence(item.get('confidence')),
+                'profile': profile,
             }
             name_map[key] = character
             characters.append(character)
@@ -312,22 +355,23 @@ def register_ai_routes(app, *, get_db, resolve_novel_file_path, is_text_readable
 
         user_prompt = '\n\n'.join(context_blocks) + textwrap.dedent("""
 
-    请分析这本小说中已经明确出现或被文本直接支持的角色，以及角色之间的关系。
+    请为这本小说中已经明确出现或被文本直接支持的角色生成角色卡，并整理角色之间的关系。
 
     要求：
     1. 只输出一个 JSON 对象，不要输出 Markdown。
     2. JSON 格式必须为：
-       {"characters":[{"name":"角色名","aliases":["别名"],"role_type":"主角/反派/同伴/配角/未知","description":"角色说明","traits":["特征"],"first_chapter_index":0,"evidence":"证据片段","confidence":0.8}],"relations":[{"source":"角色A","target":"角色B","relation_type":"关系类型","description":"关系说明","evidence":"证据片段","confidence":0.8}]}
+       {"characters":[{"name":"角色名","aliases":["别名"],"role_type":"主角/反派/同伴/配角/未知","summary":"一句话角色定位","description":"角色说明","appearance":"外貌或气质","personality":["性格标签"],"motivation":"明确动机","skills":["能力或特长"],"first_seen":"首次出现位置","first_chapter_index":0,"evidence":"证据片段","confidence":0.8}],"relations":[{"source":"角色A","target":"角色B","relation_type":"关系类型","description":"关系说明","evidence":"证据片段","confidence":0.8}]}
     3. 只基于已提供文本判断，不要编造未出现的人物、关系和结局。
     4. characters 最多 12 个，relations 最多 20 条。
     5. evidence 必须是能支持判断的简短文本依据。
-    6. confidence 用 0 到 1 的数字表示可信度。
+    6. 信息不足的扩展字段可以留空字符串或空数组，不要补写未被文本支持的细节。
+    7. confidence 用 0 到 1 的数字表示可信度。
     """)
 
         return [
             {
                 'role': 'system',
-                'content': '你是一个严谨的小说人物关系分析助手，只根据文本证据整理人物和关系。'
+                'content': '你是一个严谨的小说角色卡整理助手，只根据文本证据整理角色资料和关系。'
             },
             {
                 'role': 'user',
@@ -360,6 +404,18 @@ def register_ai_routes(app, *, get_db, resolve_novel_file_path, is_text_readable
             character_ids.add(item['id'])
             item['aliases'] = parse_json_list(item.pop('aliases_json', '[]'))
             item['traits'] = parse_json_list(item.pop('traits_json', '[]'))
+            item['profile'] = parse_json_dict(item.pop('profile_json', '{}'))
+            if not item['profile']:
+                first_seen = f"第 {item['first_chapter_index'] + 1} 章" if item.get('first_chapter_index') is not None else ''
+                item['profile'] = {
+                    'summary': item.get('description') or '',
+                    'appearance': '',
+                    'personality': item.get('traits') or [],
+                    'motivation': '',
+                    'skills': [],
+                    'first_seen': first_seen,
+                    'card_evidence': item.get('evidence') or '',
+                }
             characters.append(item)
 
         cursor.execute('''
@@ -402,8 +458,9 @@ def register_ai_routes(app, *, get_db, resolve_novel_file_path, is_text_readable
                 cursor.execute('''
                     INSERT INTO novel_characters (
                         novel_id, name, aliases_json, role_type, description,
-                        traits_json, first_chapter_index, evidence, confidence, sort_order
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        traits_json, first_chapter_index, evidence, confidence,
+                        profile_json, sort_order
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ''', (
                     novel_id,
                     character['name'],
@@ -414,6 +471,7 @@ def register_ai_routes(app, *, get_db, resolve_novel_file_path, is_text_readable
                     character['first_chapter_index'],
                     character['evidence'],
                     character['confidence'],
+                    json.dumps(character.get('profile') or {}, ensure_ascii=False),
                     index,
                 ))
                 character_id_by_name[character['name'].lower()] = cursor.lastrowid
@@ -945,7 +1003,7 @@ def register_ai_routes(app, *, get_db, resolve_novel_file_path, is_text_readable
             characters, relations = normalize_character_analysis_payload(response_data)
 
             if not characters:
-                return jsonify({'success': False, 'message': 'AI 未识别到可用角色，请换更多正文内容后重试'}), 500
+                return jsonify({'success': False, 'message': 'AI 未识别到可用角色卡，请换更多正文内容后重试'}), 500
 
             analysis = replace_character_analysis(
                 novel_id,
