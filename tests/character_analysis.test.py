@@ -24,8 +24,13 @@ class FakeAIClient:
                     'name': '林舟',
                     'aliases': ['小舟'],
                     'role_type': '主角',
+                    'summary': '追查星河钥匙的核心行动者。',
                     'description': '负责追查星河钥匙的核心人物。',
-                    'traits': ['冷静', '执着'],
+                    'appearance': '气质冷静，行动时克制而专注。',
+                    'personality': ['冷静', '执着'],
+                    'motivation': '查清星河钥匙的来源。',
+                    'skills': ['推理', '行动力'],
+                    'first_seen': '第一章 星河钥匙',
                     'first_chapter_index': 0,
                     'evidence': '林舟第一次发现星河钥匙。',
                     'confidence': 0.92,
@@ -34,8 +39,13 @@ class FakeAIClient:
                     'name': '沈秋',
                     'aliases': [],
                     'role_type': '同伴',
+                    'summary': '协助主角破解线索的同伴。',
                     'description': '协助林舟破解线索。',
-                    'traits': ['敏锐'],
+                    'appearance': '观察细致，表达直接。',
+                    'personality': ['敏锐'],
+                    'motivation': '帮助林舟确认另一种推理方向。',
+                    'skills': ['观察', '分析'],
+                    'first_seen': '第二章 同行',
                     'first_chapter_index': 1,
                     'evidence': '沈秋提出另一种推理方向。',
                     'confidence': 0.88,
@@ -101,6 +111,12 @@ class CharacterAnalysisTest(unittest.TestCase):
         self.assertEqual(data['relation_count'], 1)
         self.assertEqual(data['characters'][0]['name'], '林舟')
         self.assertEqual(data['characters'][0]['aliases'], ['小舟'])
+        self.assertEqual(data['characters'][0]['profile']['summary'], '追查星河钥匙的核心行动者。')
+        self.assertEqual(data['characters'][0]['profile']['appearance'], '气质冷静，行动时克制而专注。')
+        self.assertEqual(data['characters'][0]['profile']['personality'], ['冷静', '执着'])
+        self.assertEqual(data['characters'][0]['profile']['motivation'], '查清星河钥匙的来源。')
+        self.assertEqual(data['characters'][0]['profile']['skills'], ['推理', '行动力'])
+        self.assertEqual(data['characters'][0]['profile']['first_seen'], '第一章 星河钥匙')
         self.assertEqual(data['relations'][0]['source_name'], '林舟')
         self.assertEqual(data['relations'][0]['target_name'], '沈秋')
         self.assertIn('正文片段', self.fake_client.messages[1]['content'])
@@ -113,6 +129,43 @@ class CharacterAnalysisTest(unittest.TestCase):
         self.assertEqual(read_payload['data']['character_count'], 2)
         self.assertEqual(read_payload['data']['relation_count'], 1)
         self.assertEqual(read_payload['data']['analysis_status'], 'completed')
+        read_character = read_payload['data']['characters'][0]
+        self.assertEqual(read_character['profile']['summary'], '追查星河钥匙的核心行动者。')
+        self.assertEqual(read_character['profile']['skills'], ['推理', '行动力'])
+
+    def test_character_analysis_accepts_legacy_character_payload(self):
+        class LegacyAIClient:
+            def chat(self, messages, stream=False):
+                return json.dumps({
+                    'characters': [
+                        {
+                            'name': '旧角色',
+                            'aliases': ['旧名'],
+                            'role_type': '配角',
+                            'description': '旧格式中的角色说明。',
+                            'traits': ['谨慎'],
+                            'first_chapter_index': 0,
+                            'evidence': '旧角色在第一章出现。',
+                            'confidence': 0.7,
+                        }
+                    ],
+                    'relations': [],
+                }, ensure_ascii=False)
+
+        ai_routes.get_ai_client = lambda: LegacyAIClient()
+
+        response = self.client.post(f'/api/ai/novels/{self.novel_id}/characters/analyze')
+        payload = response.get_json()
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(payload['success'])
+        character = payload['data']['characters'][0]
+        self.assertEqual(character['name'], '旧角色')
+        self.assertEqual(character['description'], '旧格式中的角色说明。')
+        self.assertEqual(character['traits'], ['谨慎'])
+        self.assertEqual(character['profile']['summary'], '旧格式中的角色说明。')
+        self.assertEqual(character['profile']['personality'], ['谨慎'])
+        self.assertEqual(character['profile']['first_seen'], '第 1 章')
 
     def test_character_analysis_requires_existing_novel(self):
         response = self.client.post('/api/ai/novels/99999/characters/analyze')
