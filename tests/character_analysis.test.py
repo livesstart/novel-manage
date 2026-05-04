@@ -280,6 +280,23 @@ class CharacterAnalysisTest(unittest.TestCase):
         self.assertEqual(character['profile']['first_seen'], '第 3 章')
         self.assertEqual(character['profile']['card_evidence'], '旧库角色在第三章现身。')
 
+    def test_character_library_schema_adds_manual_fields_idempotently(self):
+        conn = sqlite3.connect(novel_app.DATABASE)
+        cursor = conn.cursor()
+
+        ai_routes.ensure_character_analysis_schema(cursor)
+        ai_routes.ensure_character_analysis_schema(cursor)
+
+        cursor.execute('PRAGMA table_info(novel_characters)')
+        character_columns = {row[1] for row in cursor.fetchall()}
+        cursor.execute('PRAGMA table_info(novel_character_relations)')
+        relation_columns = {row[1] for row in cursor.fetchall()}
+        conn.close()
+
+        self.assertIn('notes', character_columns)
+        self.assertIn('is_manual', character_columns)
+        self.assertIn('is_manual', relation_columns)
+
     def test_character_analysis_requires_existing_novel(self):
         response = self.client.post('/api/ai/novels/99999/characters/analyze')
         payload = response.get_json()
