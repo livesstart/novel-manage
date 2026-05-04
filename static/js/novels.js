@@ -908,6 +908,7 @@ function renderNovelDetail(novel) {
         editNovel(novel.id);
     };
     document.getElementById('btn-detail-check-file').onclick = () => loadNovelDetailFileInfo(novel.id);
+    document.getElementById('btn-open-character-library').onclick = () => openCharacterLibraryForNovel(novel.id);
     document.getElementById('btn-detail-analyze-characters').onclick = () => analyzeNovelCharactersWithAI(novel.id);
     document.querySelectorAll('.novel-detail-tab').forEach(tab => {
         tab.onclick = () => switchNovelDetailTab(tab.dataset.detailTab);

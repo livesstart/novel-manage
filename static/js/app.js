@@ -39,6 +39,11 @@ function switchView(viewName) {
         applyFilters();
     }
 
+    if (viewName === 'characters') {
+        renderCharacterFilters();
+        loadCharacterLibrary();
+    }
+
     // 加载爬虫数据
     if (viewName === 'crawler') {
         loadCrawlerStats();
@@ -67,11 +72,41 @@ function bindEvents() {
 
     // 搜索
     let searchTimeout;
+    let characterSearchTimeout;
     document.getElementById('search-input').addEventListener('input', (e) => {
         clearTimeout(searchTimeout);
         searchTimeout = setTimeout(() => {
             applyFilters();
         }, 300);
+    });
+
+    document.getElementById('character-library-search').addEventListener('input', (e) => {
+        clearTimeout(characterSearchTimeout);
+        characterSearchTimeout = setTimeout(() => {
+            loadCharacterLibrary({ keyword: e.target.value.trim() });
+        }, 300);
+    });
+    document.getElementById('character-library-novel-filter').addEventListener('change', (e) => {
+        loadCharacterLibrary({ novelId: e.target.value });
+    });
+    document.getElementById('character-library-role-filter').addEventListener('change', (e) => {
+        loadCharacterLibrary({ roleType: e.target.value });
+    });
+    document.getElementById('character-library-tag-filter').addEventListener('input', (e) => {
+        loadCharacterLibrary({ tag: e.target.value.trim() });
+    });
+    document.getElementById('character-library-sort').addEventListener('change', (e) => {
+        loadCharacterLibrary({ sort: e.target.value });
+    });
+    document.getElementById('btn-character-create').addEventListener('click', () => openCharacterDrawer(null));
+    document.getElementById('btn-character-ai-generate').addEventListener('click', generateCharacterCardsForCurrentNovel);
+    document.getElementById('btn-character-save').addEventListener('click', saveCharacter);
+    document.getElementById('btn-character-delete').addEventListener('click', deleteCharacter);
+    document.getElementById('btn-character-ai-complete').addEventListener('click', completeCharacterWithAI);
+    document.getElementById('btn-character-relation-save').addEventListener('click', saveCharacterRelation);
+    document.getElementById('btn-character-drawer-close').addEventListener('click', closeCharacterDrawer);
+    document.getElementById('character-novel-id').addEventListener('change', (e) => {
+        refreshCharacterRelationTargets(e.target.value, Number(document.getElementById('character-id').value || 0));
     });
     // 筛选器
     document.getElementById('filter-category').addEventListener('change', applyFilters);

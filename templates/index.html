@@ -21,6 +21,10 @@
                     <i class="fas fa-book"></i>
                     <span>小说列表</span>
                 </a>
+                <a href="#" class="nav-item" data-view="characters">
+                    <i class="fas fa-address-card"></i>
+                    <span>角色库</span>
+                </a>
                 <a href="#" class="nav-item" data-view="categories">
                     <i class="fas fa-folder"></i>
                     <span>分类管理</span>
@@ -146,6 +150,49 @@
                     <div class="novels-grid" id="novels-grid">
                         <!-- 动态加载小说卡片 -->
                     </div>
+                </div>
+
+                <!-- 角色库视图 -->
+                <div class="view hidden" id="view-characters">
+                    <section class="character-library-shell">
+                        <div class="character-library-toolbar">
+                            <div class="character-library-heading">
+                                <span class="section-kicker">角色资料库</span>
+                                <h2>角色库</h2>
+                            </div>
+                            <div class="character-library-actions">
+                                <button class="btn btn-secondary" id="btn-character-ai-generate">
+                                    <i class="fas fa-wand-magic-sparkles"></i>
+                                    AI 生成该书角色卡
+                                </button>
+                                <button class="btn btn-primary" id="btn-character-create">
+                                    <i class="fas fa-plus"></i>
+                                    新建角色
+                                </button>
+                            </div>
+                        </div>
+                        <div class="character-library-filters">
+                            <input type="text" id="character-library-search" placeholder="搜索角色名、别名、简介或备注">
+                            <select id="character-library-novel-filter"></select>
+                            <select id="character-library-role-filter">
+                                <option value="">全部身份</option>
+                                <option value="主角">主角</option>
+                                <option value="反派">反派</option>
+                                <option value="同伴">同伴</option>
+                                <option value="配角">配角</option>
+                                <option value="未知">未知</option>
+                            </select>
+                            <input type="text" id="character-library-tag-filter" placeholder="标签">
+                            <select id="character-library-sort">
+                                <option value="updated_desc">最近更新</option>
+                                <option value="updated_asc">最早更新</option>
+                                <option value="name">名称</option>
+                                <option value="novel">所属小说</option>
+                                <option value="role">身份</option>
+                            </select>
+                        </div>
+                        <div class="character-library-grid" id="character-library-grid"></div>
+                    </section>
                 </div>
 
                 <!-- 分类管理视图 -->
@@ -523,10 +570,16 @@
                                     <h4>角色卡</h4>
                                     <p id="novel-character-status">尚未生成角色卡</p>
                                 </div>
-                                <button class="btn btn-sm btn-secondary" id="btn-detail-analyze-characters">
-                                    <i class="fas fa-address-card"></i>
-                                    AI 生成角色卡
-                                </button>
+                                <div class="novel-character-actions">
+                                    <button class="btn btn-sm btn-secondary" id="btn-open-character-library">
+                                        <i class="fas fa-address-card"></i>
+                                        打开角色库查看全部
+                                    </button>
+                                    <button class="btn btn-sm btn-secondary" id="btn-detail-analyze-characters">
+                                        <i class="fas fa-wand-magic-sparkles"></i>
+                                        AI 生成角色卡
+                                    </button>
+                                </div>
                             </div>
                             <div class="novel-character-layout">
                                 <div class="novel-character-column">
@@ -1251,6 +1304,60 @@
         </div>
     </div>
 
+    <aside class="character-drawer" id="character-drawer" aria-hidden="true">
+        <div class="character-drawer-panel">
+            <div class="character-drawer-head">
+                <div>
+                    <span class="section-kicker" id="character-drawer-novel">未选择小说</span>
+                    <h3 id="character-drawer-title">新建角色</h3>
+                </div>
+                <button class="btn-close" id="btn-character-drawer-close">&times;</button>
+            </div>
+            <div class="character-drawer-body">
+                <input type="hidden" id="character-id">
+                <label>所属小说</label>
+                <select id="character-novel-id"></select>
+                <label>角色名</label>
+                <input type="text" id="character-name">
+                <label>别名</label>
+                <input type="text" id="character-aliases" placeholder="用顿号或逗号分隔">
+                <label>身份</label>
+                <input type="text" id="character-role-type">
+                <label>简介</label>
+                <textarea id="character-description" rows="3"></textarea>
+                <label>性格/特征</label>
+                <input type="text" id="character-traits" placeholder="用顿号或逗号分隔">
+                <label>标签</label>
+                <input type="text" id="character-tags" placeholder="用顿号或逗号分隔">
+                <label>一句话定位</label>
+                <input type="text" id="character-summary">
+                <label>外貌/气质</label>
+                <input type="text" id="character-appearance">
+                <label>动机</label>
+                <input type="text" id="character-motivation">
+                <label>能力/特长</label>
+                <input type="text" id="character-skills" placeholder="用顿号或逗号分隔">
+                <label>备注</label>
+                <textarea id="character-notes" rows="3"></textarea>
+                <div class="character-relation-editor">
+                    <div class="character-section-title">相关角色</div>
+                    <div id="character-relation-list"></div>
+                    <div class="character-relation-form">
+                        <select id="character-relation-target"></select>
+                        <input type="text" id="character-relation-type" placeholder="关系类型">
+                        <input type="text" id="character-relation-description" placeholder="关系说明">
+                        <button class="btn btn-secondary" id="btn-character-relation-save">保存关系</button>
+                    </div>
+                </div>
+            </div>
+            <div class="character-drawer-footer">
+                <button class="btn btn-secondary" id="btn-character-ai-complete">AI 补全</button>
+                <button class="btn btn-secondary" id="btn-character-delete">删除</button>
+                <button class="btn btn-primary" id="btn-character-save">保存角色</button>
+            </div>
+        </div>
+    </aside>
+
     <script src="/static/js/core.js"></script>
     <script src="/static/js/novels.js"></script>
     <script src="/static/js/reader.js"></script>
@@ -1258,6 +1365,7 @@
     <script src="/static/js/ai.js"></script>
     <script src="/static/js/batch.js"></script>
     <script src="/static/js/import.js"></script>
+    <script src="/static/js/characters.js"></script>
     <script src="/static/js/app.js"></script>
 </body>
 </html>

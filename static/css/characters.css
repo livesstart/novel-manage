@@ -1,0 +1,226 @@
+.character-library-shell {
+    display: grid;
+    gap: 16px;
+}
+
+.character-library-toolbar,
+.character-library-actions,
+.character-library-filters {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+
+.character-library-toolbar {
+    justify-content: space-between;
+}
+
+.character-library-heading h2 {
+    margin: 2px 0 0;
+}
+
+.character-library-filters input,
+.character-library-filters select {
+    min-height: 38px;
+    min-width: 150px;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius);
+    padding: 0 10px;
+}
+
+.character-library-filters input:first-child {
+    flex: 1 1 260px;
+}
+
+.character-library-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+    gap: 12px;
+}
+
+.character-library-card {
+    display: grid;
+    gap: 8px;
+    min-height: 168px;
+    padding: 14px;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius);
+    background: #ffffff;
+    cursor: pointer;
+    transition: border-color 0.2s ease, transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.character-library-card:hover {
+    transform: translateY(-2px);
+    border-color: #0ea5e9;
+    box-shadow: 0 10px 22px rgba(15, 23, 42, 0.1);
+}
+
+.character-library-card h3 {
+    margin: 0;
+    font-size: 17px;
+    line-height: 1.35;
+}
+
+.character-library-card p {
+    margin: 0;
+    color: var(--text-secondary);
+    line-height: 1.6;
+}
+
+.character-library-card-meta,
+.character-library-card-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    color: var(--text-secondary);
+    font-size: 12px;
+}
+
+.character-library-card-tags span {
+    padding: 3px 8px;
+    border-radius: 999px;
+    background: #ecfeff;
+    color: #0e7490;
+}
+
+.character-library-card-notes {
+    padding-top: 6px;
+    border-top: 1px solid var(--border-color);
+    color: var(--text-secondary);
+    font-size: 12px;
+}
+
+.character-library-empty {
+    grid-column: 1 / -1;
+    padding: 28px;
+    border: 1px dashed var(--border-color);
+    border-radius: var(--radius);
+    background: #ffffff;
+    color: var(--text-secondary);
+    text-align: center;
+}
+
+.character-drawer {
+    position: fixed;
+    inset: 0;
+    z-index: 1200;
+    display: none;
+    justify-content: flex-end;
+    background: rgba(15, 23, 42, 0.28);
+}
+
+.character-drawer.active {
+    display: flex;
+}
+
+.character-drawer-panel {
+    width: min(620px, 100%);
+    height: 100%;
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr) auto;
+    background: #ffffff;
+    box-shadow: -20px 0 40px rgba(15, 23, 42, 0.18);
+}
+
+.character-drawer-head,
+.character-drawer-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 16px;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.character-drawer-footer {
+    border-top: 1px solid var(--border-color);
+    border-bottom: 0;
+}
+
+.character-drawer-body {
+    overflow: auto;
+    display: grid;
+    gap: 8px;
+    padding: 16px;
+}
+
+.character-drawer-body label {
+    color: var(--text-secondary);
+    font-size: 13px;
+}
+
+.character-drawer-body input,
+.character-drawer-body select,
+.character-drawer-body textarea {
+    width: 100%;
+    min-height: 38px;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius);
+    padding: 8px 10px;
+}
+
+.character-section-title {
+    margin-top: 12px;
+    font-weight: 700;
+}
+
+.character-relation-editor {
+    display: grid;
+    gap: 10px;
+}
+
+.character-relation-form {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+}
+
+.character-relation-form button {
+    grid-column: 1 / -1;
+}
+
+.character-relation-item,
+.character-relation-empty {
+    display: grid;
+    gap: 6px;
+    padding: 10px;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius);
+    background: #f8fafc;
+}
+
+.character-relation-item p {
+    margin: 0;
+    color: var(--text-secondary);
+}
+
+.character-relation-item button {
+    justify-self: start;
+}
+
+.novel-character-actions {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+}
+
+@media (max-width: 720px) {
+    .character-library-toolbar,
+    .character-library-actions {
+        align-items: stretch;
+        flex-direction: column;
+    }
+
+    .character-library-actions .btn,
+    .character-library-filters input,
+    .character-library-filters select {
+        width: 100%;
+    }
+
+    .character-relation-form {
+        grid-template-columns: 1fr;
+    }
+}
