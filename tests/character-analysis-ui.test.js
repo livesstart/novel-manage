@@ -31,9 +31,11 @@ for (const id of requiredTemplateIds) {
 assert.match(template, />\s*角色卡\s*</, 'detail tab should be labeled as character cards');
 assert.match(template, /<h4>角色卡<\/h4>/, 'character panel heading should use character-card copy');
 assert.match(template, /AI 生成角色卡/, 'analysis button should generate character cards');
+assert.match(template, /id="btn-open-character-library"/, 'novel detail should link to full character library');
 
 assert.match(novelsJs, /async function loadNovelCharacterAnalysis\(novelId\)/, 'detail view should load character analysis');
 assert.match(novelsJs, /async function analyzeNovelCharactersWithAI\(novelId\)/, 'detail view should trigger AI analysis');
+assert.match(novelsJs, /openCharacterLibraryForNovel/, 'novel detail should open character library filtered by novel');
 assert.match(novelsJs, /function getCharacterProfile\(character\)/, 'frontend should normalize role-card profile fields');
 assert.match(novelsJs, /function renderCharacterProfileMeta/, 'frontend should render role-card profile metadata');
 assert.match(novelsJs, /function renderNovelCharacterAnalysis\(analysis\)/, 'frontend should render character-card analysis');
