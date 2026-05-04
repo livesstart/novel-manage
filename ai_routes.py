@@ -55,6 +55,10 @@ def ensure_character_analysis_schema(cursor):
     character_columns = {row[1] for row in cursor.fetchall()}
     if 'profile_json' not in character_columns:
         cursor.execute("ALTER TABLE novel_characters ADD COLUMN profile_json TEXT DEFAULT '{}'")
+    if 'notes' not in character_columns:
+        cursor.execute("ALTER TABLE novel_characters ADD COLUMN notes TEXT DEFAULT ''")
+    if 'is_manual' not in character_columns:
+        cursor.execute('ALTER TABLE novel_characters ADD COLUMN is_manual INTEGER DEFAULT 0')
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS novel_character_relations (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -73,6 +77,10 @@ def ensure_character_analysis_schema(cursor):
             FOREIGN KEY (target_character_id) REFERENCES novel_characters(id) ON DELETE CASCADE
         )
     ''')
+    cursor.execute('PRAGMA table_info(novel_character_relations)')
+    relation_columns = {row[1] for row in cursor.fetchall()}
+    if 'is_manual' not in relation_columns:
+        cursor.execute('ALTER TABLE novel_character_relations ADD COLUMN is_manual INTEGER DEFAULT 0')
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_novel_characters_novel ON novel_characters(novel_id, sort_order)')
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_novel_relations_novel ON novel_character_relations(novel_id, sort_order)')
 
@@ -405,6 +413,8 @@ def register_ai_routes(app, *, get_db, resolve_novel_file_path, is_text_readable
             item['aliases'] = parse_json_list(item.pop('aliases_json', '[]'))
             item['traits'] = parse_json_list(item.pop('traits_json', '[]'))
             item['profile'] = parse_json_dict(item.pop('profile_json', '{}'))
+            item['notes'] = item.get('notes') or ''
+            item['is_manual'] = int(item.get('is_manual') or 0)
             if not item['profile']:
                 first_seen = f"第 {item['first_chapter_index'] + 1} 章" if item.get('first_chapter_index') is not None else ''
                 item['profile'] = {
@@ -428,7 +438,11 @@ def register_ai_routes(app, *, get_db, resolve_novel_file_path, is_text_readable
             WHERE r.novel_id = ?
             ORDER BY r.sort_order ASC, r.id ASC
         ''', (novel_id,))
-        relations = [dict(row) for row in cursor.fetchall()]
+        relations = []
+        for row in cursor.fetchall():
+            relation = dict(row)
+            relation['is_manual'] = int(relation.get('is_manual') or 0)
+            relations.append(relation)
         conn.close()
 
         run_data = dict(run) if run else None
@@ -450,31 +464,87 @@ def register_ai_routes(app, *, get_db, resolve_novel_file_path, is_text_readable
         cursor = conn.cursor()
 
         try:
-            cursor.execute('DELETE FROM novel_character_relations WHERE novel_id = ?', (novel_id,))
-            cursor.execute('DELETE FROM novel_characters WHERE novel_id = ?', (novel_id,))
-
+            cursor.execute('SELECT * FROM novel_characters WHERE novel_id = ?', (novel_id,))
+            existing_by_name = {row['name'].lower(): dict(row) for row in cursor.fetchall()}
             character_id_by_name = {}
             for index, character in enumerate(characters):
-                cursor.execute('''
-                    INSERT INTO novel_characters (
-                        novel_id, name, aliases_json, role_type, description,
-                        traits_json, first_chapter_index, evidence, confidence,
-                        profile_json, sort_order
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ''', (
-                    novel_id,
-                    character['name'],
-                    json.dumps(character['aliases'], ensure_ascii=False),
-                    character['role_type'],
-                    character['description'],
-                    json.dumps(character['traits'], ensure_ascii=False),
-                    character['first_chapter_index'],
-                    character['evidence'],
-                    character['confidence'],
-                    json.dumps(character.get('profile') or {}, ensure_ascii=False),
-                    index,
-                ))
-                character_id_by_name[character['name'].lower()] = cursor.lastrowid
+                key = character['name'].lower()
+                existing = existing_by_name.get(key)
+                ai_profile = character.get('profile') or {}
+                ai_traits = character.get('traits') or []
+
+                if existing:
+                    is_manual = int(existing.get('is_manual') or 0)
+                    existing_profile = parse_json_dict(existing.get('profile_json'))
+                    existing_traits = parse_json_list(existing.get('traits_json'))
+                    if is_manual:
+                        merged_profile = dict(existing_profile)
+                        for field, value in ai_profile.items():
+                            if not merged_profile.get(field):
+                                merged_profile[field] = value
+                        aliases = parse_json_list(existing.get('aliases_json')) or character['aliases']
+                        role_type = existing.get('role_type') or character['role_type']
+                        description = existing.get('description') or character['description']
+                        traits = existing_traits or ai_traits
+                        notes = existing.get('notes') or ''
+                        manual_flag = 1
+                    else:
+                        merged_profile = ai_profile
+                        aliases = character['aliases']
+                        role_type = character['role_type']
+                        description = character['description']
+                        traits = ai_traits
+                        notes = existing.get('notes') or ''
+                        manual_flag = 0
+
+                    cursor.execute('''
+                        UPDATE novel_characters
+                        SET aliases_json = ?, role_type = ?, description = ?,
+                            traits_json = ?, first_chapter_index = ?, evidence = ?,
+                            confidence = ?, profile_json = ?, notes = ?,
+                            is_manual = ?, sort_order = ?, updated_at = CURRENT_TIMESTAMP
+                        WHERE id = ?
+                    ''', (
+                        json.dumps(aliases, ensure_ascii=False),
+                        role_type,
+                        description,
+                        json.dumps(traits, ensure_ascii=False),
+                        character['first_chapter_index'],
+                        character['evidence'],
+                        character['confidence'],
+                        json.dumps(merged_profile, ensure_ascii=False),
+                        notes,
+                        manual_flag,
+                        index,
+                        existing['id'],
+                    ))
+                    character_id_by_name[key] = existing['id']
+                else:
+                    cursor.execute('''
+                        INSERT INTO novel_characters (
+                            novel_id, name, aliases_json, role_type, description,
+                            traits_json, first_chapter_index, evidence, confidence,
+                            profile_json, notes, is_manual, sort_order
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', 0, ?)
+                    ''', (
+                        novel_id,
+                        character['name'],
+                        json.dumps(character['aliases'], ensure_ascii=False),
+                        character['role_type'],
+                        character['description'],
+                        json.dumps(ai_traits, ensure_ascii=False),
+                        character['first_chapter_index'],
+                        character['evidence'],
+                        character['confidence'],
+                        json.dumps(ai_profile, ensure_ascii=False),
+                        index,
+                    ))
+                    character_id_by_name[key] = cursor.lastrowid
+
+            cursor.execute('''
+                DELETE FROM novel_character_relations
+                WHERE novel_id = ? AND COALESCE(is_manual, 0) = 0
+            ''', (novel_id,))
 
             saved_relation_count = 0
             for index, relation in enumerate(relations):
@@ -486,8 +556,9 @@ def register_ai_routes(app, *, get_db, resolve_novel_file_path, is_text_readable
                 cursor.execute('''
                     INSERT INTO novel_character_relations (
                         novel_id, source_character_id, target_character_id,
-                        relation_type, description, evidence, confidence, sort_order
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        relation_type, description, evidence, confidence,
+                        is_manual, sort_order
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?)
                 ''', (
                     novel_id,
                     source_id,

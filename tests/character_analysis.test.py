@@ -297,6 +297,83 @@ class CharacterAnalysisTest(unittest.TestCase):
         self.assertIn('is_manual', character_columns)
         self.assertIn('is_manual', relation_columns)
 
+    def test_ai_generation_preserves_manual_character_notes_and_relations(self):
+        conn = sqlite3.connect(novel_app.DATABASE)
+        cursor = conn.cursor()
+        ai_routes.ensure_character_analysis_schema(cursor)
+        cursor.execute('''
+            INSERT INTO novel_characters (
+                novel_id, name, aliases_json, role_type, description,
+                traits_json, first_chapter_index, evidence, confidence,
+                profile_json, notes, is_manual, sort_order
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (
+            self.novel_id,
+            '林舟',
+            json.dumps(['手动别名'], ensure_ascii=False),
+            '主角',
+            '手动维护的角色简介。',
+            json.dumps(['谨慎'], ensure_ascii=False),
+            0,
+            '手动证据',
+            0.5,
+            json.dumps({'summary': '手动定位', 'tags': ['手动标签']}, ensure_ascii=False),
+            '保留备注',
+            1,
+            0,
+        ))
+        source_id = cursor.lastrowid
+        cursor.execute('''
+            INSERT INTO novel_characters (
+                novel_id, name, aliases_json, role_type, description,
+                traits_json, profile_json, notes, is_manual, sort_order
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (
+            self.novel_id,
+            '沈秋',
+            '[]',
+            '同伴',
+            '手动维护的同伴简介。',
+            json.dumps(['敏锐'], ensure_ascii=False),
+            json.dumps({'summary': '同伴定位'}, ensure_ascii=False),
+            '',
+            1,
+            1,
+        ))
+        target_id = cursor.lastrowid
+        cursor.execute('''
+            INSERT INTO novel_character_relations (
+                novel_id, source_character_id, target_character_id,
+                relation_type, description, evidence, confidence, is_manual, sort_order
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (
+            self.novel_id,
+            source_id,
+            target_id,
+            '手动关系',
+            '手动关系说明',
+            '手动关系证据',
+            1,
+            1,
+            0,
+        ))
+        conn.commit()
+        conn.close()
+
+        response = self.client.post(f'/api/ai/novels/{self.novel_id}/characters/analyze')
+        self.assertEqual(response.status_code, 200)
+
+        read_response = self.client.get(f'/api/novels/{self.novel_id}/characters')
+        read_payload = read_response.get_json()
+        self.assertTrue(read_payload['success'])
+        character = next(item for item in read_payload['data']['characters'] if item['name'] == '林舟')
+        relation_descriptions = [relation['description'] for relation in read_payload['data']['relations']]
+
+        self.assertEqual(character['notes'], '保留备注')
+        self.assertEqual(character['is_manual'], 1)
+        self.assertEqual(character['profile']['summary'], '手动定位')
+        self.assertIn('手动关系说明', relation_descriptions)
+
     def test_character_analysis_requires_existing_novel(self):
         response = self.client.post('/api/ai/novels/99999/characters/analyze')
         payload = response.get_json()

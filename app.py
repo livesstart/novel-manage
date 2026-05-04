@@ -1048,6 +1048,7 @@ def check_novel_file(novel_id):
 
 # ==================== AI 配置 API ====================
 from ai_routes import ensure_character_analysis_schema, register_ai_routes
+from character_routes import register_character_routes
 from crawler_routes import (
     _ensure_crawler_site_rule_schema,
     _ensure_crawler_task_schema,
@@ -1057,6 +1058,14 @@ from crawler_routes import (
 )
 
 register_ai_routes(
+    app,
+    get_db=get_db,
+    resolve_novel_file_path=resolve_novel_file_path,
+    is_text_readable_file=is_text_readable_file,
+    detect_encoding=detect_encoding,
+)
+
+register_character_routes(
     app,
     get_db=get_db,
     resolve_novel_file_path=resolve_novel_file_path,
