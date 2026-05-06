@@ -25,6 +25,31 @@ function hideLoginScreen() {
     }
 }
 
+function canManageSystem(status = state.authStatus) {
+    if (!status) return true;
+    if (Object.prototype.hasOwnProperty.call(status, 'can_manage_system')) {
+        return Boolean(status.can_manage_system);
+    }
+    return !status.login_required || Boolean(status.user?.is_admin);
+}
+
+function syncAdminAccess(status = state.authStatus) {
+    const allowed = canManageSystem(status);
+    document.querySelectorAll('[data-view="admin"]').forEach(item => {
+        item.hidden = !allowed;
+        item.setAttribute('aria-hidden', String(!allowed));
+        item.tabIndex = allowed ? 0 : -1;
+        if (!allowed) {
+            item.classList.remove('active');
+        }
+    });
+
+    const adminView = document.getElementById('view-admin');
+    if (adminView && !allowed) {
+        adminView.classList.add('hidden');
+    }
+}
+
 function bindAuthEvents() {
     if (adminState.authEventsBound) return;
     adminState.authEventsBound = true;
@@ -44,6 +69,7 @@ async function initAuthGate() {
     }
 
     state.authStatus = res.data;
+    syncAdminAccess(res.data);
     if (res.data.login_required && !res.data.authenticated) {
         showLoginScreen('');
         return false;
@@ -111,6 +137,8 @@ function updateAdminHeader(status = state.authStatus) {
     const logoutBtn = document.getElementById('btn-admin-logout');
     if (!userEl || !logoutBtn) return;
 
+    syncAdminAccess(status);
+
     const user = status?.user;
     if (status?.login_required && user) {
         userEl.textContent = `当前用户：${user.display_name || user.username}`;
@@ -162,6 +190,15 @@ function renderAdminUsers(users = []) {
 }
 
 async function loadAdminPanel() {
+    if (!canManageSystem()) {
+        syncAdminAccess();
+        showToast('普通用户无权访问系统管理', 'error');
+        if (state.currentView === 'admin' && typeof switchView === 'function') {
+            switchView('novels');
+        }
+        return;
+    }
+
     try {
         const [statusRes, settingsRes, usersRes] = await Promise.all([
             api.get('/api/auth/status'),
@@ -171,6 +208,14 @@ async function loadAdminPanel() {
 
         if (statusRes.success) {
             state.authStatus = statusRes.data;
+            if (!canManageSystem(statusRes.data)) {
+                syncAdminAccess(statusRes.data);
+                showToast('普通用户无权访问系统管理', 'error');
+                if (state.currentView === 'admin' && typeof switchView === 'function') {
+                    switchView('novels');
+                }
+                return;
+            }
             updateAdminHeader(statusRes.data);
         }
         if (settingsRes.success) {

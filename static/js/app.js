@@ -15,6 +15,14 @@ async function init() {
 }
 
 function switchView(viewName) {
+    if (viewName === 'admin' && typeof canManageSystem === 'function' && !canManageSystem()) {
+        if (typeof syncAdminAccess === 'function') {
+            syncAdminAccess();
+        }
+        showToast('普通用户无权访问系统管理', 'error');
+        viewName = 'novels';
+    }
+
     state.currentView = viewName;
 
     // 更新导航

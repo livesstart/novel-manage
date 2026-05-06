@@ -34,6 +34,17 @@ class AdminAuthTest(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         return response.get_json()['data']
 
+    def create_user(self, username='reader', password='secret123', is_admin=False):
+        response = self.client.post('/api/admin/users', json={
+            'username': username,
+            'password': password,
+            'display_name': username,
+            'is_admin': is_admin,
+            'is_active': True,
+        })
+        self.assertEqual(response.status_code, 200)
+        return response.get_json()['data']
+
     def test_login_is_disabled_by_default_and_admin_api_is_available(self):
         status_response = self.client.get('/api/auth/status')
         status_payload = status_response.get_json()
@@ -73,6 +84,28 @@ class AdminAuthTest(unittest.TestCase):
         allowed_response = self.client.get('/api/novels')
         self.assertEqual(allowed_response.status_code, 200)
         self.assertTrue(allowed_response.get_json()['success'])
+
+    def test_regular_user_cannot_manage_system_when_login_is_enabled(self):
+        self.create_admin()
+        self.create_user()
+        enable_response = self.client.put('/api/admin/settings', json={'login_required': True})
+        self.assertEqual(enable_response.status_code, 200)
+
+        login_response = self.client.post('/api/auth/login', json={
+            'username': 'reader',
+            'password': 'secret123',
+        })
+        self.assertEqual(login_response.status_code, 200)
+
+        status_response = self.client.get('/api/auth/status')
+        status_payload = status_response.get_json()
+        self.assertEqual(status_response.status_code, 200)
+        self.assertTrue(status_payload['data']['authenticated'])
+        self.assertFalse(status_payload['data']['user']['is_admin'])
+        self.assertFalse(status_payload['data']['can_manage_system'])
+
+        users_response = self.client.get('/api/admin/users')
+        self.assertEqual(users_response.status_code, 403)
 
     def test_prevent_deleting_last_active_admin(self):
         admin = self.create_admin()

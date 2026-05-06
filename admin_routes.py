@@ -109,6 +109,13 @@ def register_admin_routes(app, *, get_db):
         row = cursor.fetchone()
         return int(row['total'] if row else 0)
 
+    def can_manage_system(user, *, login_required=None):
+        if login_required is None:
+            login_required = is_login_required()
+        if not login_required:
+            return True
+        return bool(user and user.get('is_admin'))
+
     def validate_username(username):
         username = (username or '').strip()
         if not USERNAME_PATTERN.match(username):
@@ -169,6 +176,7 @@ def register_admin_routes(app, *, get_db):
                 'login_required': login_required,
                 'authenticated': bool(user) if login_required else True,
                 'user': user,
+                'can_manage_system': can_manage_system(user, login_required=login_required),
             }
         })
 

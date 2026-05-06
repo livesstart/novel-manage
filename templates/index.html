@@ -420,24 +420,60 @@
                                 </button>
                             </div>
 
-                            <div class="admin-panel">
-                                <h3>新增用户</h3>
-                                <p>用户创建后可用于登录。管理员可以继续维护登录开关和用户。</p>
-                                <div class="admin-user-form">
-                                    <label for="admin-new-username">用户名</label>
-                                    <input type="text" id="admin-new-username" placeholder="例如：admin">
-                                    <label for="admin-new-display-name">显示名称</label>
-                                    <input type="text" id="admin-new-display-name" placeholder="可选">
-                                    <label for="admin-new-password">初始密码</label>
-                                    <input type="password" id="admin-new-password" placeholder="至少 6 位">
-                                    <div class="admin-checks">
-                                        <label><input type="checkbox" id="admin-new-is-admin" checked> 管理员</label>
-                                        <label><input type="checkbox" id="admin-new-is-active" checked> 启用</label>
-                                    </div>
-                                    <button class="btn btn-primary" id="btn-admin-create-user">
+                            <div class="admin-panel admin-create-panel">
+                                <div class="admin-panel-heading">
+                                    <div class="admin-panel-icon">
                                         <i class="fas fa-user-plus"></i>
-                                        创建用户
-                                    </button>
+                                    </div>
+                                    <div>
+                                        <h3>新增用户</h3>
+                                        <p>用户创建后可用于登录。管理员可以继续维护登录开关和用户。</p>
+                                    </div>
+                                </div>
+                                <div class="admin-user-form admin-create-form">
+                                    <div class="admin-field">
+                                        <label for="admin-new-username">用户名</label>
+                                        <div class="admin-input-wrap">
+                                            <i class="fas fa-at"></i>
+                                            <input type="text" id="admin-new-username" placeholder="例如：admin">
+                                        </div>
+                                    </div>
+                                    <div class="admin-field">
+                                        <label for="admin-new-display-name">显示名称</label>
+                                        <div class="admin-input-wrap">
+                                            <i class="fas fa-id-card"></i>
+                                            <input type="text" id="admin-new-display-name" placeholder="可选">
+                                        </div>
+                                    </div>
+                                    <div class="admin-field admin-field-wide">
+                                        <label for="admin-new-password">初始密码</label>
+                                        <div class="admin-input-wrap">
+                                            <i class="fas fa-lock"></i>
+                                            <input type="password" id="admin-new-password" placeholder="至少 6 位">
+                                        </div>
+                                    </div>
+                                    <div class="admin-checks admin-create-options">
+                                        <label class="admin-check-option">
+                                            <input type="checkbox" id="admin-new-is-admin" checked>
+                                            <span>
+                                                <strong>管理员</strong>
+                                                <small>可维护系统设置和用户</small>
+                                            </span>
+                                        </label>
+                                        <label class="admin-check-option">
+                                            <input type="checkbox" id="admin-new-is-active" checked>
+                                            <span>
+                                                <strong>启用账号</strong>
+                                                <small>创建后立即允许登录</small>
+                                            </span>
+                                        </label>
+                                    </div>
+                                    <div class="admin-create-actions">
+                                        <button class="btn btn-primary" id="btn-admin-create-user">
+                                            <i class="fas fa-user-plus"></i>
+                                            创建用户
+                                        </button>
+                                    </div>
                                 </div>
                             </div>
                         </div>

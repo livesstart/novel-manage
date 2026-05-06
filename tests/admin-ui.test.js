@@ -37,6 +37,8 @@ assert.match(coreJs, /res\.status === 401/, 'API wrapper should handle unauthent
 
 assert.match(adminJs, /async function initAuthGate\(\)/, 'admin.js should gate app initialization by auth status');
 assert.match(adminJs, /function showLoginScreen/, 'admin.js should show the login screen');
+assert.match(adminJs, /function canManageSystem/, 'admin.js should derive system management access');
+assert.match(adminJs, /function syncAdminAccess/, 'admin.js should hide system management from regular users');
 assert.match(adminJs, /async function loadAdminPanel\(\)/, 'admin.js should load management data');
 assert.match(adminJs, /async function saveAdminSettings\(\)/, 'admin.js should save login settings');
 assert.match(adminJs, /async function createAdminUser\(\)/, 'admin.js should create users');
@@ -44,10 +46,15 @@ assert.match(adminJs, /async function saveAdminUser/, 'admin.js should update us
 assert.match(adminJs, /async function deleteAdminUser/, 'admin.js should delete users');
 assert.match(appJs, /const canEnterApp = await initAuthGate\(\)/, 'app init should respect the auth gate');
 assert.match(appJs, /viewName === 'admin'/, 'app view switch should load admin panel');
+assert.match(appJs, /!canManageSystem\(\)/, 'app view switch should reject admin view for regular users');
 assert.match(appJs, /bindAdminEvents\(\)/, 'app should bind admin events');
 
 assert.match(adminCss, /\.login-screen/, 'login screen should be styled');
 assert.match(adminCss, /\.admin-shell/, 'admin page shell should be styled');
+assert.match(template, /admin-create-panel/, 'new user form should use the polished create panel');
+assert.match(template, /admin-input-wrap/, 'new user inputs should use icon input wrappers');
+assert.match(adminCss, /\.admin-create-form/, 'new user form should use a compact responsive grid');
+assert.match(adminCss, /\.admin-check-option/, 'new user permission toggles should be styled as options');
 assert.match(adminCss, /\.admin-user-card/, 'admin user cards should be styled');
 assert.match(adminCss, /\.switch/, 'login toggle should be styled');
 
