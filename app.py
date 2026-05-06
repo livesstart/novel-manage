@@ -4,6 +4,7 @@
 import os
 import sqlite3
 import re
+import secrets
 from datetime import datetime
 from pathlib import Path
 from flask import Flask, render_template, jsonify, request, send_file
@@ -14,6 +15,29 @@ from db_utils import connect_database, enable_wal
 
 app = Flask(__name__, static_folder='static', template_folder='templates')
 CORS(app)
+
+
+def _load_or_create_secret_key():
+    configured_secret = os.getenv('APP_SECRET_KEY')
+    if configured_secret:
+        return configured_secret
+
+    secret_path = Path(app.instance_path) / 'app_secret.key'
+    try:
+        secret_path.parent.mkdir(parents=True, exist_ok=True)
+        if secret_path.exists():
+            saved_secret = secret_path.read_text(encoding='utf-8').strip()
+            if saved_secret:
+                return saved_secret
+
+        generated_secret = secrets.token_hex(32)
+        secret_path.write_text(generated_secret, encoding='utf-8')
+        return generated_secret
+    except OSError:
+        return secrets.token_hex(32)
+
+
+app.config['SECRET_KEY'] = _load_or_create_secret_key()
 
 DATABASE = 'novels.db'
 def get_db():
@@ -158,6 +182,7 @@ def init_db():
     _seed_default_crawler_site_rules(cursor)
     _recover_interrupted_crawler_tasks(cursor)
     ensure_character_analysis_schema(cursor)
+    ensure_management_schema(cursor)
 
     conn.commit()
     conn.close()
@@ -1047,6 +1072,7 @@ def check_novel_file(novel_id):
 
 
 # ==================== AI 配置 API ====================
+from admin_routes import ensure_management_schema, register_admin_routes
 from ai_routes import ensure_character_analysis_schema, register_ai_routes
 from character_routes import register_character_routes
 from crawler_routes import (
@@ -1074,6 +1100,7 @@ register_character_routes(
 )
 
 register_crawler_routes(app, get_db=get_db)
+register_admin_routes(app, get_db=get_db)
 
 def scan_folder(folder_path, create_category_from_folder=True):
     """扫描文件夹中的小说文件

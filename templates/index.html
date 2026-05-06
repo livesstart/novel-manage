@@ -7,7 +7,23 @@
     <link rel="stylesheet" href="/static/css/style.css">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
 </head>
-<body>
+<body class="auth-pending">
+    <div class="login-screen hidden" id="login-screen">
+        <form class="login-card" id="login-form">
+            <h1>登录小说管理器</h1>
+            <p id="login-hint">登录已开启，请输入管理员创建的账号。</p>
+            <label for="login-username">用户名</label>
+            <input type="text" id="login-username" autocomplete="username">
+            <label for="login-password">密码</label>
+            <input type="password" id="login-password" autocomplete="current-password">
+            <div class="login-error" id="login-error"></div>
+            <button class="btn btn-primary" id="btn-login-submit" type="submit">
+                <i class="fas fa-right-to-bracket"></i>
+                登录
+            </button>
+        </form>
+    </div>
+
     <div class="app-container">
         <!-- 侧边栏 -->
         <aside class="sidebar">
@@ -40,6 +56,10 @@
                 <a href="#" class="nav-item" data-view="ai-config">
                     <i class="fas fa-robot"></i>
                     <span>AI 配置</span>
+                </a>
+                <a href="#" class="nav-item" data-view="admin">
+                    <i class="fas fa-shield-halved"></i>
+                    <span>系统管理</span>
                 </a>
             </nav>
 
@@ -363,6 +383,72 @@
                             </div>
                         </div>
                     </div>
+                </div>
+
+                <!-- 系统管理视图 -->
+                <div class="view hidden" id="view-admin">
+                    <section class="admin-shell">
+                        <div class="section-header">
+                            <div>
+                                <h2>系统管理</h2>
+                                <p class="admin-current-user" id="admin-current-user">当前未启用登录</p>
+                            </div>
+                            <button class="btn btn-secondary" id="btn-admin-logout">
+                                <i class="fas fa-right-from-bracket"></i>
+                                退出登录
+                            </button>
+                        </div>
+                        <div class="admin-grid">
+                            <div class="admin-panel admin-setting-card">
+                                <div>
+                                    <h3>登录保护</h3>
+                                    <p>开启后，访问数据接口前必须先登录。开启前至少需要一个启用的管理员账号。</p>
+                                </div>
+                                <div class="admin-toggle-row">
+                                    <div>
+                                        <strong>是否开启登录</strong>
+                                        <span id="admin-login-required-status">当前关闭</span>
+                                    </div>
+                                    <label class="switch">
+                                        <input type="checkbox" id="admin-login-required">
+                                        <span class="slider"></span>
+                                    </label>
+                                </div>
+                                <button class="btn btn-primary" id="btn-admin-save-settings">
+                                    <i class="fas fa-save"></i>
+                                    保存登录设置
+                                </button>
+                            </div>
+
+                            <div class="admin-panel">
+                                <h3>新增用户</h3>
+                                <p>用户创建后可用于登录。管理员可以继续维护登录开关和用户。</p>
+                                <div class="admin-user-form">
+                                    <label for="admin-new-username">用户名</label>
+                                    <input type="text" id="admin-new-username" placeholder="例如：admin">
+                                    <label for="admin-new-display-name">显示名称</label>
+                                    <input type="text" id="admin-new-display-name" placeholder="可选">
+                                    <label for="admin-new-password">初始密码</label>
+                                    <input type="password" id="admin-new-password" placeholder="至少 6 位">
+                                    <div class="admin-checks">
+                                        <label><input type="checkbox" id="admin-new-is-admin" checked> 管理员</label>
+                                        <label><input type="checkbox" id="admin-new-is-active" checked> 启用</label>
+                                    </div>
+                                    <button class="btn btn-primary" id="btn-admin-create-user">
+                                        <i class="fas fa-user-plus"></i>
+                                        创建用户
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="admin-panel">
+                            <h3>用户管理</h3>
+                            <div class="admin-user-list" id="admin-user-list">
+                                <div class="admin-empty">暂无用户</div>
+                            </div>
+                        </div>
+                    </section>
                 </div>
             </div>
         </main>
@@ -1388,6 +1474,7 @@
     <script src="/static/js/batch.js"></script>
     <script src="/static/js/import.js"></script>
     <script src="/static/js/characters.js"></script>
+    <script src="/static/js/admin.js"></script>
     <script src="/static/js/app.js"></script>
 </body>
 </html>

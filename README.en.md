@@ -15,6 +15,7 @@ This project is intended only for learning, research, and personal local use. Do
 - Batch import: scan a local folder for novel files and infer categories from folder names.
 - AI configuration: configure OpenAI, Anthropic, Gemini, or OpenAI-compatible endpoints, test connections, and generate novel descriptions, tags, settings, characters, and character relationships.
 - Crawler management: create crawl tasks, manage site rules, batch-create tasks from list pages, retry tasks, resume tasks, and save crawl results to the local library.
+- System management: enable login protection from the management page and maintain local login users.
 - Local-first storage: the database and uploaded files are stored locally by default for easier backup and migration.
 
 ## Tech Stack
@@ -29,6 +30,7 @@ This project is intended only for learning, research, and personal local use. Do
 ```text
 novel/
 |-- app.py                 # Flask backend and APIs
+|-- admin_routes.py        # Login toggle, sessions, and user management APIs
 |-- ai_client.py           # AI provider adapters and call wrappers
 |-- requirements.txt       # Python dependencies
 |-- README.md              # Chinese documentation
@@ -48,6 +50,7 @@ novel/
 |   |   |-- crawler.css    # Crawler management
 |   |   |-- reader.css     # Reader
 |   |   |-- ai.css         # AI configuration
+|   |   |-- admin.css      # System management and login page
 |   |   `-- overrides.css  # Post-refresh overrides and refinements
 |   `-- js/
 |       |-- core.js        # Shared frontend state, APIs, and utilities
@@ -57,6 +60,7 @@ novel/
 |       |-- ai.js          # AI configuration, model tests, and chat
 |       |-- batch.js       # Batch operations and batch AI
 |       |-- import.js      # Batch import
+|       |-- admin.js       # Auth status, management page, and user management interactions
 |       `-- app.js         # App initialization and event binding entry
 |-- tests/
 |   |-- novel-card-ui.test.js
@@ -137,6 +141,18 @@ After adding and activating a provider in "AI Configuration", you can:
 - Batch-generate descriptions and tags for selected novels, confirm each result, and write it back to the database.
 
 Sensitive configuration such as API keys is stored only in the local database. Please manage local backups and file permissions yourself.
+
+### System Management
+
+In "System Management", you can manage login protection and local users:
+
+- Login is not required by default, so upgrading an existing installation does not lock you out.
+- At least one active administrator must exist before login protection can be enabled.
+- After login protection is enabled, all data APIs except auth status and login require an authenticated session.
+- You can create users, edit usernames/display names, reset passwords, enable or disable users, assign administrator access, and delete users.
+- The system prevents disabling, demoting, or deleting the last active administrator to avoid lockouts.
+
+To provide a server-side session secret manually, set `APP_SECRET_KEY` before startup. If it is not set, the system generates and reuses a local random secret in `instance/app_secret.key`.
 
 ### Crawler Management
 
@@ -247,3 +263,4 @@ This project is designed for local use and personal library management. Before d
 - Stricter file upload size, type, and path restrictions.
 - A database backup strategy.
 - API key encryption or a safer secret-management approach.
+- Finer-grained user roles and operation audit logs.

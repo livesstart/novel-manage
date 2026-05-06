@@ -1,0 +1,264 @@
+.auth-pending .app-container {
+    display: none;
+}
+
+.login-screen {
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    background:
+        linear-gradient(135deg, rgba(37, 99, 235, 0.12), transparent 38%),
+        linear-gradient(180deg, #f8fafc 0%, #eef2f7 100%);
+}
+
+.login-screen.hidden {
+    display: none;
+}
+
+.login-card {
+    width: min(420px, 100%);
+    padding: 28px;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius);
+    background: #ffffff;
+    box-shadow: var(--shadow-lg);
+}
+
+.login-card h1 {
+    margin: 0 0 8px;
+    color: var(--text-primary);
+    font-size: 24px;
+}
+
+.login-card p {
+    margin: 0 0 20px;
+    color: var(--text-secondary);
+    line-height: 1.6;
+}
+
+.login-card label {
+    display: block;
+    margin: 12px 0 6px;
+    color: var(--text-primary);
+    font-size: 13px;
+    font-weight: 700;
+}
+
+.login-card input {
+    width: 100%;
+}
+
+.login-error {
+    min-height: 20px;
+    margin: 10px 0 0;
+    color: #b91c1c;
+    font-size: 13px;
+}
+
+.login-card .btn {
+    width: 100%;
+    justify-content: center;
+    margin-top: 16px;
+}
+
+.admin-shell {
+    display: grid;
+    gap: 18px;
+}
+
+.admin-grid {
+    display: grid;
+    grid-template-columns: minmax(260px, 340px) minmax(0, 1fr);
+    gap: 18px;
+    align-items: start;
+}
+
+.admin-panel {
+    padding: 18px;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius);
+    background: #ffffff;
+}
+
+.admin-panel h3 {
+    margin: 0 0 8px;
+    color: var(--text-primary);
+    font-size: 17px;
+}
+
+.admin-panel p {
+    margin: 0;
+    color: var(--text-secondary);
+    line-height: 1.6;
+}
+
+.admin-setting-card {
+    display: grid;
+    gap: 14px;
+}
+
+.admin-toggle-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 14px;
+    padding: 12px;
+    border-radius: var(--radius);
+    background: #f8fafc;
+}
+
+.admin-toggle-row strong {
+    display: block;
+    margin-bottom: 3px;
+    color: var(--text-primary);
+}
+
+.admin-toggle-row span {
+    color: var(--text-secondary);
+    font-size: 13px;
+}
+
+.switch {
+    position: relative;
+    display: inline-block;
+    flex: 0 0 auto;
+    width: 48px;
+    height: 28px;
+}
+
+.switch input {
+    width: 0;
+    height: 0;
+    opacity: 0;
+}
+
+.slider {
+    position: absolute;
+    inset: 0;
+    border-radius: 999px;
+    background: #cbd5e1;
+    cursor: pointer;
+    transition: background 0.2s;
+}
+
+.slider::before {
+    content: "";
+    position: absolute;
+    width: 22px;
+    height: 22px;
+    left: 3px;
+    top: 3px;
+    border-radius: 50%;
+    background: #ffffff;
+    box-shadow: 0 2px 6px rgba(15, 23, 42, 0.2);
+    transition: transform 0.2s;
+}
+
+.switch input:checked + .slider {
+    background: var(--primary-color);
+}
+
+.switch input:checked + .slider::before {
+    transform: translateX(20px);
+}
+
+.admin-user-form {
+    display: grid;
+    gap: 10px;
+    margin-top: 14px;
+}
+
+.admin-user-form label {
+    color: var(--text-primary);
+    font-size: 13px;
+    font-weight: 700;
+}
+
+.admin-user-form input {
+    width: 100%;
+}
+
+.admin-checks {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+}
+
+.admin-checks label,
+.admin-user-flags label {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--text-secondary);
+    font-size: 13px;
+}
+
+.admin-user-list {
+    display: grid;
+    gap: 12px;
+}
+
+.admin-user-card {
+    display: grid;
+    grid-template-columns: 1.1fr 1fr auto;
+    gap: 12px;
+    align-items: center;
+    padding: 12px;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius);
+    background: #f8fafc;
+}
+
+.admin-user-card input {
+    width: 100%;
+}
+
+.admin-user-main strong {
+    display: block;
+    color: var(--text-primary);
+}
+
+.admin-user-main span {
+    color: var(--text-secondary);
+    font-size: 12px;
+}
+
+.admin-user-flags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+}
+
+.admin-user-actions {
+    display: flex;
+    gap: 8px;
+}
+
+.admin-empty {
+    padding: 18px;
+    border: 1px dashed var(--border-color);
+    border-radius: var(--radius);
+    color: var(--text-secondary);
+    text-align: center;
+}
+
+.admin-current-user {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--text-secondary);
+    font-size: 13px;
+}
+
+@media (max-width: 900px) {
+    .admin-grid,
+    .admin-user-card {
+        grid-template-columns: 1fr;
+    }
+
+    .admin-user-actions {
+        justify-content: flex-start;
+    }
+}

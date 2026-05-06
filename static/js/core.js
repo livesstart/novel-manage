@@ -16,6 +16,7 @@ const state = {
     detailNovel: null,
     detailCharacterAnalysis: null,
     detailSettingAnalysis: null,
+    authStatus: null,
     editingCategory: null,
     editingTag: null,
     importStep: 1,
@@ -38,10 +39,23 @@ const batchAIState = {
 };
 
 // API 封装
+async function parseApiResponse(res) {
+    const payload = await res.json().catch(() => ({
+        success: false,
+        message: '服务器返回了无法解析的数据'
+    }));
+
+    if (res.status === 401 && typeof showLoginScreen === 'function') {
+        showLoginScreen(payload.message || '请先登录');
+    }
+
+    return payload;
+}
+
 const api = {
     async get(url) {
         const res = await fetch(url);
-        return res.json();
+        return parseApiResponse(res);
     },
     async post(url, data) {
         const res = await fetch(url, {
@@ -49,14 +63,14 @@ const api = {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(data)
         });
-        return res.json();
+        return parseApiResponse(res);
     },
     async postForm(url, formData) {
         const res = await fetch(url, {
             method: 'POST',
             body: formData
         });
-        return res.json();
+        return parseApiResponse(res);
     },
     async put(url, data) {
         const res = await fetch(url, {
@@ -64,11 +78,11 @@ const api = {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(data)
         });
-        return res.json();
+        return parseApiResponse(res);
     },
     async delete(url) {
         const res = await fetch(url, { method: 'DELETE' });
-        return res.json();
+        return parseApiResponse(res);
     }
 };
 

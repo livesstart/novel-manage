@@ -17,6 +17,8 @@ const expectedImports = [
     'crawler.css',
     'reader.css',
     'ai.css',
+    'characters.css',
+    'admin.css',
     'overrides.css',
 ];
 

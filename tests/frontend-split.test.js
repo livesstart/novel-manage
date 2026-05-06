@@ -13,6 +13,8 @@ const expectedScripts = [
     '/static/js/ai.js',
     '/static/js/batch.js',
     '/static/js/import.js',
+    '/static/js/characters.js',
+    '/static/js/admin.js',
     '/static/js/app.js',
 ];
 

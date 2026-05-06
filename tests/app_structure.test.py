@@ -12,6 +12,12 @@ import app as novel_app
 
 EXPECTED_ROUTES = [
     ('/', 'GET'),
+    ('/api/admin/settings', 'GET'),
+    ('/api/admin/settings', 'PUT'),
+    ('/api/admin/users', 'GET'),
+    ('/api/admin/users', 'POST'),
+    ('/api/admin/users/<int:user_id>', 'DELETE'),
+    ('/api/admin/users/<int:user_id>', 'PUT'),
     ('/api/ai/chat', 'POST'),
     ('/api/ai/configs', 'GET'),
     ('/api/ai/configs', 'POST'),
@@ -26,6 +32,9 @@ EXPECTED_ROUTES = [
     ('/api/ai/novels/metadata', 'POST'),
     ('/api/ai/novels/metadata/feedback', 'POST'),
     ('/api/ai/providers', 'GET'),
+    ('/api/auth/login', 'POST'),
+    ('/api/auth/logout', 'POST'),
+    ('/api/auth/status', 'GET'),
     ('/api/categories', 'GET'),
     ('/api/categories', 'POST'),
     ('/api/categories/<int:category_id>', 'DELETE'),
@@ -98,6 +107,7 @@ class AppStructureTest(unittest.TestCase):
         python_files = [
             'app.py',
             'ai_routes.py',
+            'admin_routes.py',
             'character_routes.py',
             'crawler_routes.py',
             'reader_utils.py',

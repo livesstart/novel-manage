@@ -1,5 +1,10 @@
 // 前端入口：初始化应用、切换视图并绑定事件。
 async function init() {
+    const canEnterApp = await initAuthGate();
+    if (!canEnterApp) {
+        return;
+    }
+
     await Promise.all([
         loadStats(),
         loadCategories(),
@@ -58,6 +63,10 @@ function switchView(viewName) {
     if (viewName === 'ai-config') {
         loadAIProviders();
         loadAIConfigs();
+    }
+
+    if (viewName === 'admin') {
+        loadAdminPanel();
     }
 }
 
@@ -466,6 +475,8 @@ function bindEvents() {
             sendChatMessage();
         }
     });
+
+    bindAdminEvents();
 }
 
 // ==================== 批量导入功能 ====================
