@@ -508,6 +508,10 @@
                         <i class="fas fa-file-lines"></i>
                         本地文件
                     </button>
+                    <button class="novel-detail-tab" id="novel-detail-tab-settings" type="button" role="tab" aria-selected="false" data-detail-tab="settings">
+                        <i class="fas fa-scroll"></i>
+                        设定集
+                    </button>
                     <button class="novel-detail-tab" id="novel-detail-tab-characters" type="button" role="tab" aria-selected="false" data-detail-tab="characters">
                         <i class="fas fa-address-card"></i>
                         角色卡
@@ -559,6 +563,24 @@
                                     <span>修改时间</span>
                                     <strong id="novel-detail-file-updated">--</strong>
                                 </div>
+                            </div>
+                        </div>
+                    </section>
+
+                    <section class="novel-detail-panel" id="novel-detail-panel-settings" role="tabpanel" data-detail-panel="settings" hidden>
+                        <div class="novel-setting-panel" id="novel-setting-panel">
+                            <div class="novel-setting-head">
+                                <div>
+                                    <h4>小说设定</h4>
+                                    <p id="novel-setting-status">尚未提取小说设定</p>
+                                </div>
+                                <button class="btn btn-sm btn-secondary" id="btn-detail-analyze-settings">
+                                    <i class="fas fa-wand-magic-sparkles"></i>
+                                    AI 提取设定
+                                </button>
+                            </div>
+                            <div class="novel-setting-list" id="novel-setting-list">
+                                <div class="novel-setting-empty">暂无小说设定数据</div>
                             </div>
                         </div>
                     </section>

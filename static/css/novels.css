@@ -417,6 +417,118 @@
     background: #f8fafc;
 }
 
+.novel-setting-panel {
+    margin-top: 0;
+    padding: 16px;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius);
+    background: #ffffff;
+}
+
+.novel-setting-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 14px;
+    margin-bottom: 14px;
+}
+
+.novel-setting-head h4 {
+    margin: 0 0 6px;
+    font-size: 15px;
+}
+
+.novel-setting-head p {
+    margin: 0;
+    color: var(--text-secondary);
+    font-size: 13px;
+}
+
+.novel-setting-head p.completed {
+    color: #047857;
+}
+
+.novel-setting-head p.failed {
+    color: #b91c1c;
+}
+
+.novel-setting-list {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+}
+
+.novel-setting-card {
+    min-width: 0;
+    padding: 14px;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius);
+    background: #f8fafc;
+}
+
+.novel-setting-card-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    margin-bottom: 8px;
+}
+
+.novel-setting-card-head strong {
+    color: var(--text-primary);
+    font-size: 15px;
+}
+
+.novel-setting-card-head span {
+    flex: 0 0 auto;
+    padding: 3px 8px;
+    border-radius: 999px;
+    background: #e0f2fe;
+    color: #0369a1;
+    font-size: 12px;
+    font-weight: 700;
+}
+
+.novel-setting-summary,
+.novel-setting-details,
+.novel-setting-evidence,
+.novel-setting-confidence {
+    margin: 0;
+    color: var(--text-secondary);
+    font-size: 13px;
+    line-height: 1.6;
+}
+
+.novel-setting-summary {
+    color: var(--text-primary);
+    font-weight: 600;
+}
+
+.novel-setting-details {
+    margin-top: 8px;
+}
+
+.novel-setting-evidence {
+    margin-top: 10px;
+    padding: 9px 10px;
+    border-left: 3px solid #38bdf8;
+    background: #f0f9ff;
+}
+
+.novel-setting-confidence {
+    margin-top: 8px;
+    font-size: 12px;
+}
+
+.novel-setting-empty {
+    grid-column: 1 / -1;
+    padding: 18px;
+    border: 1px dashed var(--border-color);
+    border-radius: var(--radius);
+    color: var(--text-secondary);
+    text-align: center;
+}
+
 .novel-character-panel {
     margin-top: 0;
     padding: 16px;
@@ -763,8 +875,13 @@
     }
 
     .novel-detail-metrics,
-    .novel-detail-file-grid {
+    .novel-detail-file-grid,
+    .novel-setting-list {
         grid-template-columns: 1fr 1fr;
+    }
+
+    .novel-setting-head {
+        flex-direction: column;
     }
 
     .novel-character-layout {

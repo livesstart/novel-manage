@@ -13,7 +13,7 @@ This project is intended only for learning, research, and personal local use. Do
 - Categories and tags: custom categories, colored tags, multi-tag filtering, and filtering novels without tags.
 - Batch operations: batch add tags, set categories, update reading status, delete novels, and generate descriptions/tags with AI.
 - Batch import: scan a local folder for novel files and infer categories from folder names.
-- AI configuration: configure OpenAI, Anthropic, Gemini, or OpenAI-compatible endpoints, test connections, and generate novel descriptions, tags, characters, and character relationships.
+- AI configuration: configure OpenAI, Anthropic, Gemini, or OpenAI-compatible endpoints, test connections, and generate novel descriptions, tags, settings, characters, and character relationships.
 - Crawler management: create crawl tasks, manage site rules, batch-create tasks from list pages, retry tasks, resume tasks, and save crawl results to the local library.
 - Local-first storage: the database and uploaded files are stored locally by default for easier backup and migration.
 
@@ -132,6 +132,7 @@ After adding and activating a provider in "AI Configuration", you can:
 
 - Test the AI chat connection.
 - Generate descriptions and tags when editing a single novel.
+- Extract settings such as worldbuilding, locations, organizations, rule systems, timelines, key items, and terminology on a novel detail page.
 - Analyze characters, aliases, identities, traits, evidence snippets, and character relationships on a novel detail page.
 - Batch-generate descriptions and tags for selected novels, confirm each result, and write it back to the database.
 

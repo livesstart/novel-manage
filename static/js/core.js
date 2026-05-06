@@ -15,6 +15,7 @@ const state = {
     editingNovel: null,
     detailNovel: null,
     detailCharacterAnalysis: null,
+    detailSettingAnalysis: null,
     editingCategory: null,
     editingTag: null,
     importStep: 1,

@@ -83,6 +83,39 @@ def ensure_character_analysis_schema(cursor):
         cursor.execute('ALTER TABLE novel_character_relations ADD COLUMN is_manual INTEGER DEFAULT 0')
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_novel_characters_novel ON novel_characters(novel_id, sort_order)')
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_novel_relations_novel ON novel_character_relations(novel_id, sort_order)')
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS novel_setting_analysis_runs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            novel_id INTEGER NOT NULL UNIQUE,
+            status TEXT DEFAULT 'pending',
+            model TEXT,
+            setting_count INTEGER DEFAULT 0,
+            source_excerpt_chars INTEGER DEFAULT 0,
+            error_message TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            finished_at TIMESTAMP,
+            FOREIGN KEY (novel_id) REFERENCES novels(id) ON DELETE CASCADE
+        )
+    ''')
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS novel_settings (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            novel_id INTEGER NOT NULL,
+            category TEXT,
+            name TEXT NOT NULL,
+            summary TEXT,
+            details TEXT,
+            evidence TEXT,
+            confidence REAL DEFAULT 0,
+            sort_order INTEGER DEFAULT 0,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE (novel_id, category, name),
+            FOREIGN KEY (novel_id) REFERENCES novels(id) ON DELETE CASCADE
+        )
+    ''')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_novel_settings_novel ON novel_settings(novel_id, sort_order)')
 
 
 def register_ai_routes(app, *, get_db, resolve_novel_file_path, is_text_readable_file, detect_encoding):
@@ -386,6 +419,205 @@ def register_ai_routes(app, *, get_db, resolve_novel_file_path, is_text_readable
                 'content': user_prompt.strip()
             }
         ]
+
+
+    def normalize_setting_analysis_payload(payload):
+        raw_settings = payload.get('settings') if isinstance(payload, dict) else []
+        if not raw_settings and isinstance(payload, dict):
+            raw_settings = payload.get('world_settings') or payload.get('novel_settings') or []
+
+        if isinstance(raw_settings, dict):
+            expanded = []
+            for category, values in raw_settings.items():
+                if isinstance(values, list):
+                    for value in values:
+                        if isinstance(value, dict):
+                            expanded.append({'category': category, **value})
+                        else:
+                            expanded.append({'category': category, 'name': value})
+                elif isinstance(values, dict):
+                    expanded.append({'category': category, **values})
+                else:
+                    expanded.append({'category': category, 'name': values})
+            raw_settings = expanded
+
+        settings = []
+        seen = set()
+        for item in raw_settings or []:
+            if not isinstance(item, dict):
+                item = {'name': item}
+
+            category = normalize_short_text(item.get('category') or item.get('type') or '其他', max_length=24)
+            name = normalize_short_text(item.get('name') or item.get('title'), max_length=48)
+            summary = normalize_short_text(item.get('summary') or item.get('description'), max_length=220)
+            details = item.get('details') or item.get('detail') or item.get('notes') or ''
+            if isinstance(details, list):
+                details = '；'.join(normalize_short_text(value, max_length=120) for value in details if value)
+            details = normalize_short_text(details, max_length=520)
+            evidence = normalize_short_text(item.get('evidence'), max_length=220)
+
+            if not name and summary:
+                name = summary[:32].strip()
+            if not name:
+                continue
+
+            key = (category.lower(), name.lower())
+            if key in seen:
+                continue
+            seen.add(key)
+            settings.append({
+                'category': category or '其他',
+                'name': name,
+                'summary': summary,
+                'details': details,
+                'evidence': evidence,
+                'confidence': clamp_confidence(item.get('confidence')),
+            })
+            if len(settings) >= 40:
+                break
+
+        return settings
+
+
+    def build_setting_analysis_messages(novel, content_excerpt):
+        context_blocks = [
+            f'标题：{novel.get("title") or "未提供"}',
+            f'作者：{novel.get("author") or "未提供"}',
+            f'简介：{novel.get("description") or "无"}',
+        ]
+        if content_excerpt:
+            context_blocks.append(f'正文片段：\n{content_excerpt[:12000]}')
+
+        user_prompt = '\n\n'.join(context_blocks) + textwrap.dedent("""
+
+    请提取这本小说中已经明确出现或被文本直接支持的关键设定，整理成可维护的设定集。
+
+    可关注但不限于：世界观、地点、组织势力、规则体系、能力体系、时间线、关键物品、专有术语、社会制度。
+
+    要求：
+    1. 只输出一个 JSON 对象，不要输出 Markdown。
+    2. JSON 格式必须为：
+       {"settings":[{"category":"世界观/地点/组织/规则体系/时间线/关键物品/术语/其他","name":"设定名","summary":"一句话说明","details":"详细说明","evidence":"证据片段","confidence":0.8}]}
+    3. 只基于已提供文本判断，不要编造未出现的设定、背景和结局。
+    4. settings 最多 18 条，优先保留影响剧情理解的核心设定。
+    5. evidence 必须是能支持判断的简短文本依据。
+    6. 信息不足时返回空字符串，不要补写未被文本支持的细节。
+    7. confidence 用 0 到 1 的数字表示可信度。
+    """)
+
+        return [
+            {
+                'role': 'system',
+                'content': '你是一个严谨的小说设定整理助手，只根据文本证据提取世界观、规则和关键设定。'
+            },
+            {
+                'role': 'user',
+                'content': user_prompt.strip()
+            }
+        ]
+
+
+    def serialize_setting_analysis(novel_id):
+        conn = get_db()
+        cursor = conn.cursor()
+
+        cursor.execute('''
+            SELECT *
+            FROM novel_setting_analysis_runs
+            WHERE novel_id = ?
+        ''', (novel_id,))
+        run = cursor.fetchone()
+
+        cursor.execute('''
+            SELECT *
+            FROM novel_settings
+            WHERE novel_id = ?
+            ORDER BY sort_order ASC, id ASC
+        ''', (novel_id,))
+        settings = [dict(row) for row in cursor.fetchall()]
+        conn.close()
+
+        run_data = dict(run) if run else None
+        status = (run_data or {}).get('status') or ('completed' if settings else 'empty')
+        return {
+            'novel_id': novel_id,
+            'analysis_status': status,
+            'analyzed_at': (run_data or {}).get('finished_at') or (run_data or {}).get('updated_at'),
+            'error_message': (run_data or {}).get('error_message'),
+            'setting_count': len(settings),
+            'settings': settings,
+        }
+
+
+    def replace_setting_analysis(novel_id, settings, *, model='', source_excerpt_chars=0):
+        conn = get_db()
+        cursor = conn.cursor()
+
+        try:
+            cursor.execute('DELETE FROM novel_settings WHERE novel_id = ?', (novel_id,))
+            for index, setting in enumerate(settings):
+                cursor.execute('''
+                    INSERT INTO novel_settings (
+                        novel_id, category, name, summary, details,
+                        evidence, confidence, sort_order
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ''', (
+                    novel_id,
+                    setting['category'],
+                    setting['name'],
+                    setting['summary'],
+                    setting['details'],
+                    setting['evidence'],
+                    setting['confidence'],
+                    index,
+                ))
+
+            cursor.execute('''
+                INSERT INTO novel_setting_analysis_runs (
+                    novel_id, status, model, setting_count,
+                    source_excerpt_chars, error_message, updated_at, finished_at
+                ) VALUES (?, 'completed', ?, ?, ?, NULL, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                ON CONFLICT(novel_id) DO UPDATE SET
+                    status = 'completed',
+                    model = excluded.model,
+                    setting_count = excluded.setting_count,
+                    source_excerpt_chars = excluded.source_excerpt_chars,
+                    error_message = NULL,
+                    updated_at = CURRENT_TIMESTAMP,
+                    finished_at = CURRENT_TIMESTAMP
+            ''', (
+                novel_id,
+                model,
+                len(settings),
+                source_excerpt_chars,
+            ))
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
+        return serialize_setting_analysis(novel_id)
+
+
+    def mark_setting_analysis_failed(novel_id, error_message, *, model='', source_excerpt_chars=0):
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute('''
+            INSERT INTO novel_setting_analysis_runs (
+                novel_id, status, model, setting_count,
+                source_excerpt_chars, error_message, updated_at
+            ) VALUES (?, 'failed', ?, 0, ?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(novel_id) DO UPDATE SET
+                status = 'failed',
+                model = excluded.model,
+                source_excerpt_chars = excluded.source_excerpt_chars,
+                error_message = excluded.error_message,
+                updated_at = CURRENT_TIMESTAMP
+        ''', (novel_id, model, source_excerpt_chars, error_message[:500]))
+        conn.commit()
+        conn.close()
 
 
     def serialize_character_analysis(novel_id):
@@ -1049,6 +1281,19 @@ def register_ai_routes(app, *, get_db, resolve_novel_file_path, is_text_readable
         })
 
 
+    @app.route('/api/novels/<int:novel_id>/settings', methods=['GET'])
+    def get_novel_setting_analysis(novel_id):
+        """获取单本小说的设定提取结果。"""
+        novel = get_novel_detail_record(novel_id)
+        if not novel:
+            return jsonify({'success': False, 'message': '小说不存在'}), 404
+
+        return jsonify({
+            'success': True,
+            'data': serialize_setting_analysis(novel_id)
+        })
+
+
     @app.route('/api/ai/novels/<int:novel_id>/characters/analyze', methods=['POST'])
     def analyze_novel_characters(novel_id):
         """使用 AI 分析单本小说角色和角色关系。"""
@@ -1097,6 +1342,61 @@ def register_ai_routes(app, *, get_db, resolve_novel_file_path, is_text_readable
         except Exception as e:
             error_message = str(e)
             mark_character_analysis_failed(
+                novel_id,
+                error_message,
+                model=model,
+                source_excerpt_chars=len(content_excerpt)
+            )
+            return jsonify({'success': False, 'message': error_message}), 500
+
+
+    @app.route('/api/ai/novels/<int:novel_id>/settings/analyze', methods=['POST'])
+    def analyze_novel_settings(novel_id):
+        """使用 AI 提取单本小说设定。"""
+        novel = get_novel_detail_record(novel_id)
+        if not novel:
+            return jsonify({'success': False, 'message': '小说不存在'}), 404
+
+        content_excerpt = extract_text_excerpt(novel.get('file_path'), max_chars=12000)
+        if not novel.get('title') and not novel.get('description') and not content_excerpt:
+            return jsonify({'success': False, 'message': '请先填写书名，或提供可读取的 TXT 文件'}), 400
+
+        client = get_ai_client()
+        if not client:
+            return jsonify({'success': False, 'message': '请先在 AI 配置中激活可用模型'}), 400
+
+        active_config = AIConfig.get_active_config() or {}
+        model = active_config.get('model') or ''
+        messages = build_setting_analysis_messages(novel, content_excerpt)
+
+        try:
+            response_text = client.chat(messages, stream=False)
+            response_data = extract_json_object(response_text)
+            settings = normalize_setting_analysis_payload(response_data)
+
+            if not settings:
+                return jsonify({'success': False, 'message': 'AI 未识别到可用小说设定，请换更多正文内容后重试'}), 500
+
+            analysis = replace_setting_analysis(
+                novel_id,
+                settings,
+                model=model,
+                source_excerpt_chars=len(content_excerpt)
+            )
+            analysis['used_excerpt'] = bool(content_excerpt)
+            return jsonify({'success': True, 'data': analysis})
+        except (ValueError, RuntimeError) as e:
+            error_message = str(e)
+            mark_setting_analysis_failed(
+                novel_id,
+                error_message,
+                model=model,
+                source_excerpt_chars=len(content_excerpt)
+            )
+            return jsonify({'success': False, 'message': error_message}), 422
+        except Exception as e:
+            error_message = str(e)
+            mark_setting_analysis_failed(
                 novel_id,
                 error_message,
                 model=model,

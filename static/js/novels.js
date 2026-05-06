@@ -619,6 +619,91 @@ function resetNovelCharacterAnalysis() {
     document.getElementById('novel-character-relations').innerHTML = '';
 }
 
+function resetNovelSettingAnalysis() {
+    state.detailSettingAnalysis = null;
+    document.getElementById('novel-setting-status').textContent = '尚未提取小说设定';
+    document.getElementById('novel-setting-status').className = '';
+    document.getElementById('novel-setting-list').innerHTML = '<div class="novel-setting-empty">暂无小说设定数据</div>';
+}
+
+function renderNovelSettingAnalysis(analysis) {
+    state.detailSettingAnalysis = analysis;
+    const settings = Array.isArray(analysis?.settings) ? analysis.settings : [];
+    const status = analysis?.analysis_status || 'empty';
+    const statusEl = document.getElementById('novel-setting-status');
+
+    if (status === 'failed') {
+        statusEl.textContent = analysis.error_message || '上次提取失败';
+        statusEl.className = 'failed';
+    } else if (settings.length > 0) {
+        statusEl.textContent = `已提取 ${settings.length} 条小说设定`;
+        statusEl.className = 'completed';
+    } else {
+        statusEl.textContent = '尚未提取小说设定';
+        statusEl.className = '';
+    }
+
+    const list = document.getElementById('novel-setting-list');
+    if (settings.length === 0) {
+        list.innerHTML = '<div class="novel-setting-empty">暂无小说设定数据</div>';
+        return;
+    }
+
+    list.innerHTML = settings.map(setting => `
+        <article class="novel-setting-card">
+            <div class="novel-setting-card-head">
+                <strong>${escapeHtml(setting.name || '未命名设定')}</strong>
+                <span>${escapeHtml(setting.category || '其他')}</span>
+            </div>
+            <p class="novel-setting-summary">${escapeHtml(setting.summary || '暂无概要')}</p>
+            ${setting.details ? `<p class="novel-setting-details">${escapeHtml(setting.details)}</p>` : ''}
+            <div class="novel-setting-evidence">${escapeHtml(setting.evidence || '暂无证据片段')}</div>
+            <div class="novel-setting-confidence">可信度 ${formatConfidence(setting.confidence)}</div>
+        </article>
+    `).join('');
+}
+
+async function loadNovelSettingAnalysis(novelId) {
+    try {
+        const res = await api.get(`/api/novels/${novelId}/settings`);
+        if (!res.success) {
+            document.getElementById('novel-setting-status').textContent = res.message || '小说设定数据加载失败';
+            return;
+        }
+        renderNovelSettingAnalysis(res.data);
+    } catch (err) {
+        console.warn('加载小说设定数据失败:', err);
+        document.getElementById('novel-setting-status').textContent = '小说设定数据加载失败';
+    }
+}
+
+async function analyzeNovelSettingsWithAI(novelId) {
+    const button = document.getElementById('btn-detail-analyze-settings');
+    const originalHtml = button.innerHTML;
+    button.disabled = true;
+    button.innerHTML = '<span class="loading"></span> 提取中';
+    document.getElementById('novel-setting-status').textContent = 'AI 正在提取小说设定...';
+
+    try {
+        const res = await api.post(`/api/ai/novels/${novelId}/settings/analyze`, {});
+        if (!res.success) {
+            showToast(res.message || '小说设定提取失败', 'error');
+            await loadNovelSettingAnalysis(novelId);
+            return;
+        }
+
+        renderNovelSettingAnalysis(res.data);
+        switchNovelDetailTab('settings');
+        showToast(`已提取 ${res.data.setting_count} 条小说设定`, 'success');
+    } catch (err) {
+        console.error('AI 提取小说设定失败:', err);
+        showToast('AI 提取小说设定失败: ' + err.message, 'error');
+    } finally {
+        button.disabled = false;
+        button.innerHTML = originalHtml;
+    }
+}
+
 function renderCharacterBadges(items = []) {
     if (!Array.isArray(items) || items.length === 0) return '';
     return `
@@ -898,6 +983,7 @@ function renderNovelDetail(novel) {
     fileStatus.textContent = '检查中';
 
     resetNovelCharacterAnalysis();
+    resetNovelSettingAnalysis();
     switchNovelDetailTab('overview');
     renderNovelDetailTags(novel.tags);
 
@@ -910,6 +996,7 @@ function renderNovelDetail(novel) {
     document.getElementById('btn-detail-check-file').onclick = () => loadNovelDetailFileInfo(novel.id);
     document.getElementById('btn-open-character-library').onclick = () => openCharacterLibraryForNovel(novel.id);
     document.getElementById('btn-detail-analyze-characters').onclick = () => analyzeNovelCharactersWithAI(novel.id);
+    document.getElementById('btn-detail-analyze-settings').onclick = () => analyzeNovelSettingsWithAI(novel.id);
     document.querySelectorAll('.novel-detail-tab').forEach(tab => {
         tab.onclick = () => switchNovelDetailTab(tab.dataset.detailTab);
     });
@@ -964,6 +1051,7 @@ async function openNovelDetail(novelId) {
         renderNovelDetail(cachedNovel);
         openModal('novel-detail-modal');
         loadNovelDetailFileInfo(novelId);
+        loadNovelSettingAnalysis(novelId);
         loadNovelCharacterAnalysis(novelId);
         return;
     }
@@ -978,6 +1066,7 @@ async function openNovelDetail(novelId) {
         renderNovelDetail(res.data);
         openModal('novel-detail-modal');
         loadNovelDetailFileInfo(novelId);
+        loadNovelSettingAnalysis(novelId);
         loadNovelCharacterAnalysis(novelId);
     } catch (err) {
         console.error('加载小说详情失败:', err);
