@@ -1,5 +1,7 @@
 # 本地小说管理器
 
+**Language:** [简体中文](README.md) | [English](README.en.md)
+
 一个基于 Flask、SQLite 和原生前端的本地小说管理 Web 应用。它用于整理本地小说文件、维护分类和标签、记录阅读状态，并提供本地 TXT 阅读、批量导入、AI 元数据生成和网页抓取入库等辅助能力。
 
 本项目仅供学习、研究和个人本地使用，请勿用于任何违反目标站点服务条款、版权法规或其他法律法规的用途。
@@ -30,6 +32,7 @@ novel/
 ├── ai_client.py           # AI 供应商适配与调用封装
 ├── requirements.txt       # Python 依赖
 ├── README.md              # 项目说明
+├── README.en.md           # English documentation
 ├── templates/
 │   └── index.html         # 单页应用模板
 ├── static/
@@ -243,19 +246,3 @@ git diff --check
 - 更严格的文件上传大小、类型和路径限制。
 - 数据库备份策略。
 - API Key 加密或更安全的密钥管理方式。
-
-## GitHub 推送
-
-本地仓库远端地址：
-
-```bash
-git@github.com:livesstart/novel-manage.git
-```
-
-如果 SSH Key 已配置并拥有仓库权限，可以执行：
-
-```bash
-git push -u origin master
-```
-
-如果出现 `Permission denied (publickey)`，需要先把本机 SSH 公钥添加到 GitHub 账户，或改用已登录的 HTTPS 远端。
