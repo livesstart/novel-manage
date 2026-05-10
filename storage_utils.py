@@ -10,7 +10,7 @@ from flask import request
 APP_ROOT = Path(__file__).resolve().parent
 UPLOAD_ROOT = APP_ROOT / 'library'
 NOVEL_EXTENSIONS = {'.txt', '.epub', '.pdf', '.mobi', '.azw3', '.doc', '.docx', '.rtf'}
-TEXT_READABLE_EXTENSIONS = {'.txt'}
+TEXT_READABLE_EXTENSIONS = {'.txt', '.epub'}
 FILE_HASH_CHUNK_SIZE = 1024 * 1024
 
 

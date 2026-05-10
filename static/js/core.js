@@ -35,7 +35,8 @@ const batchAIState = {
     currentIndex: 0,
     isGenerating: false,
     isApplying: false,
-    autoSkipOnError: true
+    autoSkipOnError: true,
+    autoApplyGenerated: false
 };
 
 // API 封装

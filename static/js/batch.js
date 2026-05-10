@@ -208,6 +208,15 @@ function getSelectedNovelsForBatchAI() {
     return state.novels.filter(novel => state.selectedNovels.has(novel.id));
 }
 
+async function getNovelsWithoutDescriptions() {
+    const res = await api.get('/api/novels');
+    if (!res.success) {
+        throw new Error(res.message || '加载小说列表失败');
+    }
+
+    return (res.data || []).filter(novel => !(novel.description || '').trim());
+}
+
 function getCurrentBatchAIItem() {
     return batchAIState.queue[batchAIState.currentIndex] || null;
 }
@@ -256,6 +265,7 @@ function resetBatchAIQueueState() {
     batchAIState.currentIndex = 0;
     batchAIState.isGenerating = false;
     batchAIState.isApplying = false;
+    batchAIState.autoApplyGenerated = false;
 }
 
 function isBatchAISkippedStatus(status) {
@@ -270,15 +280,49 @@ function syncBatchAIModeSettings() {
     batchAIState.autoSkipOnError = autoSkipCheckbox.checked;
 }
 
-function openBatchAIModal() {
-    const selectedNovels = getSelectedNovelsForBatchAI();
-    if (selectedNovels.length === 0) {
+function syncBatchAIAutoApplyButton() {
+    const button = document.getElementById('btn-batch-ai-auto-apply');
+    if (!button) {
+        return;
+    }
+
+    const isEnabled = batchAIState.autoApplyGenerated;
+    button.setAttribute('aria-pressed', String(isEnabled));
+    button.classList.toggle('btn-primary', isEnabled);
+    button.classList.toggle('btn-secondary', !isEnabled);
+    button.innerHTML = isEnabled
+        ? '<i class="fas fa-pause"></i> 关闭自动确认'
+        : '<i class="fas fa-bolt"></i> 开启自动确认';
+}
+
+async function toggleBatchAIAutoApply() {
+    batchAIState.autoApplyGenerated = !batchAIState.autoApplyGenerated;
+    syncBatchAIAutoApplyButton();
+
+    const item = getCurrentBatchAIItem();
+    if (
+        batchAIState.autoApplyGenerated &&
+        item &&
+        item.status === 'generated' &&
+        !batchAIState.isGenerating &&
+        !batchAIState.isApplying
+    ) {
+        await applyCurrentBatchAIItem();
+    }
+}
+
+function openBatchAIQueue(novels, emptyMessage) {
+    if (novels.length === 0) {
+        if (emptyMessage) {
+            showToast(emptyMessage, 'error');
+            return;
+        }
         showToast('请先选择小说', 'error');
         return;
     }
 
     resetBatchAIQueueState();
-    batchAIState.queue = selectedNovels.map(buildBatchAIQueueItem);
+    batchAIState.queue = novels.map(buildBatchAIQueueItem);
 
     const autoSkipCheckbox = document.getElementById('batch-ai-auto-skip-error');
     if (autoSkipCheckbox) {
@@ -289,6 +333,20 @@ function openBatchAIModal() {
     renderBatchAIQueue();
     openModal('batch-ai-modal');
     processCurrentBatchAIItem();
+}
+
+function openBatchAIModal() {
+    openBatchAIQueue(getSelectedNovelsForBatchAI(), '请先选择小说');
+}
+
+async function openBatchAIForEmptyDescriptions() {
+    try {
+        const novelsWithoutDescriptions = await getNovelsWithoutDescriptions();
+        openBatchAIQueue(novelsWithoutDescriptions, '当前没有缺少简介的小说');
+    } catch (err) {
+        console.error('加载无简介小说失败:', err);
+        showToast('加载无简介小说失败: ' + err.message, 'error');
+    }
 }
 
 function renderBatchAIQueue() {
@@ -348,10 +406,12 @@ function renderBatchAICurrentItem() {
     const applyTagsEl = document.getElementById('batch-ai-apply-tags');
     const resultHintEl = document.getElementById('batch-ai-result-hint');
     const regenerateBtn = document.getElementById('btn-batch-ai-regenerate');
+    const autoApplyBtn = document.getElementById('btn-batch-ai-auto-apply');
     const skipBtn = document.getElementById('btn-batch-ai-skip');
     const applyBtn = document.getElementById('btn-batch-ai-apply-next');
 
     if (!item) {
+        syncBatchAIAutoApplyButton();
         titleEl.textContent = '队列已完成';
         metaEl.textContent = '本轮批量 AI 处理已经结束';
         statusEl.textContent = '完成';
@@ -366,6 +426,7 @@ function renderBatchAICurrentItem() {
         resultHintEl.textContent = '你可以关闭弹窗，或重新选择小说开启下一轮队列';
         document.getElementById('batch-ai-tag-select').innerHTML = '';
         regenerateBtn.disabled = true;
+        autoApplyBtn.disabled = true;
         skipBtn.disabled = true;
         applyBtn.disabled = true;
         return;
@@ -410,8 +471,10 @@ function renderBatchAICurrentItem() {
     }
 
     regenerateBtn.disabled = isBusy;
+    autoApplyBtn.disabled = false;
     skipBtn.disabled = isBusy;
     applyBtn.disabled = !canApply || isBusy;
+    syncBatchAIAutoApplyButton();
     applyBtn.innerHTML = isLast
         ? '<i class="fas fa-check"></i> 应用并完成'
         : '<i class="fas fa-check"></i> 应用并下一个';
@@ -489,6 +552,7 @@ async function processCurrentBatchAIItem(force = false) {
     }
 
     let shouldAdvanceAfterError = false;
+    let shouldAutoApplyGenerated = false;
 
     batchAIState.isGenerating = true;
     item.status = 'generating';
@@ -513,6 +577,9 @@ async function processCurrentBatchAIItem(force = false) {
         item.applyTags = item.selectedTagIds.length > 0;
         item.status = 'generated';
         renderBatchAIQueue();
+        if (batchAIState.autoApplyGenerated && item.status === 'generated') {
+            shouldAutoApplyGenerated = true;
+        }
     } catch (err) {
         item.error = err.message;
         item.generatedSummary = '';
@@ -536,6 +603,8 @@ async function processCurrentBatchAIItem(force = false) {
 
     if (shouldAdvanceAfterError) {
         await advanceBatchAIQueue();
+    } else if (shouldAutoApplyGenerated) {
+        await applyCurrentBatchAIItem();
     }
 }
 

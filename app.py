@@ -342,7 +342,7 @@ def read_novel(novel_id):
     if not is_text_readable_file(actual_path):
         return jsonify({
             'success': False,
-            'message': '当前仅支持 TXT 文件在线阅读，请使用下载功能打开原文件',
+            'message': '当前仅支持 TXT/EPUB 文件在线阅读，请使用下载功能打开原文件',
             'data': {'novel': novel, 'checked_paths': checked_paths}
         }), 400
 
@@ -399,7 +399,7 @@ def get_chapter_content(novel_id, chapter_index):
         return jsonify({'success': False, 'message': f'文件不存在: {file_path}'}), 404
 
     if not is_text_readable_file(actual_path):
-        return jsonify({'success': False, 'message': '当前仅支持 TXT 文件在线阅读'}), 400
+        return jsonify({'success': False, 'message': '当前仅支持 TXT/EPUB 文件在线阅读'}), 400
 
     try:
         chapters = get_cached_reader_file(actual_path)['chapters']

@@ -237,6 +237,8 @@ function bindEvents() {
         openBatchModal('status');
     });
 
+    document.getElementById('btn-batch-ai-empty-description').addEventListener('click', openBatchAIForEmptyDescriptions);
+
     document.getElementById('btn-batch-ai-meta').addEventListener('click', openBatchAIModal);
 
     document.getElementById('btn-batch-delete').addEventListener('click', batchDeleteNovels);
@@ -257,6 +259,7 @@ function bindEvents() {
     document.getElementById('btn-batch-ai-regenerate').addEventListener('click', () => {
         processCurrentBatchAIItem(true);
     });
+    document.getElementById('btn-batch-ai-auto-apply').addEventListener('click', toggleBatchAIAutoApply);
     document.getElementById('btn-batch-ai-skip').addEventListener('click', skipCurrentBatchAIItem);
     document.getElementById('btn-batch-ai-apply-next').addEventListener('click', applyCurrentBatchAIItem);
     document.getElementById('batch-ai-auto-skip-error').addEventListener('change', syncBatchAIModeSettings);
