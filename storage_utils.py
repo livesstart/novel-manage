@@ -1,4 +1,5 @@
 """本地小说文件存储和批量导入工具。"""
+import hashlib
 import json
 import os
 import re
@@ -10,6 +11,7 @@ APP_ROOT = Path(__file__).resolve().parent
 UPLOAD_ROOT = APP_ROOT / 'library'
 NOVEL_EXTENSIONS = {'.txt', '.epub', '.pdf', '.mobi', '.azw3', '.doc', '.docx', '.rtf'}
 TEXT_READABLE_EXTENSIONS = {'.txt'}
+FILE_HASH_CHUNK_SIZE = 1024 * 1024
 
 
 def sanitize_storage_name(name):
@@ -38,6 +40,39 @@ def sanitize_relative_storage_path(relative_path, fallback_name='untitled.txt'):
 
 def is_supported_novel_file(file_name):
     return Path(file_name or '').suffix.lower() in NOVEL_EXTENSIONS
+
+
+def calculate_file_sha256(file_path):
+    hasher = hashlib.sha256()
+    with open(file_path, 'rb') as input_file:
+        for chunk in iter(lambda: input_file.read(FILE_HASH_CHUNK_SIZE), b''):
+            hasher.update(chunk)
+    return hasher.hexdigest()
+
+
+def calculate_uploaded_file_metadata(file_storage):
+    hasher = hashlib.sha256()
+    total_size = 0
+    stream = file_storage.stream
+
+    try:
+        stream.seek(0)
+    except (AttributeError, OSError):
+        pass
+
+    for chunk in iter(lambda: stream.read(FILE_HASH_CHUNK_SIZE), b''):
+        total_size += len(chunk)
+        hasher.update(chunk)
+
+    try:
+        stream.seek(0)
+    except (AttributeError, OSError):
+        pass
+
+    return {
+        'file_size': total_size,
+        'content_hash': hasher.hexdigest()
+    }
 
 
 def store_uploaded_file(file_storage, relative_path=None, namespace='manual', reuse_existing=False):
@@ -90,6 +125,103 @@ def resolve_novel_file_path(file_path):
 
 def is_text_readable_file(file_path):
     return Path(file_path or '').suffix.lower() in TEXT_READABLE_EXTENSIONS
+
+
+def get_novel_file_metadata(file_path):
+    actual_path, _ = resolve_novel_file_path(file_path)
+    if not actual_path:
+        return {
+            'file_size': None,
+            'content_hash': ''
+        }
+
+    return {
+        'file_size': os.path.getsize(actual_path),
+        'content_hash': calculate_file_sha256(actual_path)
+    }
+
+
+def normalize_content_hash(content_hash):
+    return (content_hash or '').strip().lower()
+
+
+def coerce_file_size(file_size):
+    if file_size in (None, ''):
+        return None
+    try:
+        value = int(file_size)
+    except (TypeError, ValueError):
+        return None
+    return value if value >= 0 else None
+
+
+def prepare_import_novel_metadata(novel_data):
+    file_path = (novel_data.get('file_path') or '').strip()
+    file_size = coerce_file_size(novel_data.get('file_size'))
+    content_hash = normalize_content_hash(novel_data.get('content_hash'))
+
+    if file_path and (file_size is None or not content_hash):
+        file_metadata = get_novel_file_metadata(file_path)
+        if file_size is None:
+            file_size = coerce_file_size(file_metadata.get('file_size'))
+        if not content_hash:
+            content_hash = normalize_content_hash(file_metadata.get('content_hash'))
+
+    original_filename = (novel_data.get('original_filename') or '').strip()
+    if not original_filename and file_path:
+        original_filename = Path(file_path).name
+
+    novel_data['file_size'] = file_size
+    novel_data['content_hash'] = content_hash
+    novel_data['original_filename'] = original_filename
+    return novel_data
+
+
+def backfill_potential_duplicate_hashes(cursor, file_size):
+    query = '''
+        SELECT id, file_path
+        FROM novels
+        WHERE file_path IS NOT NULL
+          AND file_path != ''
+          AND (content_hash IS NULL OR content_hash = '')
+    '''
+    params = []
+    if file_size is not None:
+        query += ' AND (file_size = ? OR file_size IS NULL)'
+        params.append(file_size)
+
+    cursor.execute(query, params)
+    for row in cursor.fetchall():
+        file_metadata = get_novel_file_metadata(row['file_path'])
+        content_hash = normalize_content_hash(file_metadata.get('content_hash'))
+        if not content_hash:
+            continue
+        cursor.execute('''
+            UPDATE novels
+            SET file_size = ?, content_hash = ?
+            WHERE id = ?
+        ''', (
+            coerce_file_size(file_metadata.get('file_size')),
+            content_hash,
+            row['id']
+        ))
+
+
+def find_import_duplicate(cursor, novel_data):
+    file_path = (novel_data.get('file_path') or '').strip()
+    if file_path:
+        cursor.execute('SELECT id FROM novels WHERE file_path = ? LIMIT 1', (file_path,))
+        existing = cursor.fetchone()
+        if existing:
+            return existing
+
+    content_hash = normalize_content_hash(novel_data.get('content_hash'))
+    if not content_hash:
+        return None
+
+    backfill_potential_duplicate_hashes(cursor, coerce_file_size(novel_data.get('file_size')))
+    cursor.execute('SELECT id FROM novels WHERE content_hash = ? LIMIT 1', (content_hash,))
+    return cursor.fetchone()
 
 
 def _normalize_novel_ids(novel_ids):
@@ -218,6 +350,7 @@ def parse_import_request():
             if not is_supported_novel_file(relative_path):
                 raise ValueError(f'不支持的文件格式: {relative_path}')
 
+            file_metadata = calculate_uploaded_file_metadata(file_storage)
             stored_path = store_uploaded_file(
                 file_storage,
                 relative_path=relative_path,
@@ -227,6 +360,10 @@ def parse_import_request():
 
             novel_data = dict(novels[index])
             novel_data['file_path'] = stored_path
+            novel_data['file_size'] = file_metadata['file_size']
+            novel_data['content_hash'] = file_metadata['content_hash']
+            novel_data['original_filename'] = Path(relative_path).name or file_storage.filename
+            novel_data['_uploaded_file'] = True
             prepared_novels.append(novel_data)
 
         return prepared_novels, tag_ids, default_status

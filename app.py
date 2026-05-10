@@ -58,7 +58,10 @@ def _ensure_novel_schema(cursor):
     _ensure_table_columns(cursor, 'novels', {
         'last_read_chapter_index': 'INTEGER DEFAULT 0',
         'last_read_scroll_percent': 'REAL DEFAULT 0',
-        'last_read_at': 'TIMESTAMP'
+        'last_read_at': 'TIMESTAMP',
+        'file_size': 'INTEGER',
+        'content_hash': 'TEXT',
+        'original_filename': 'TEXT'
     })
 
 
@@ -121,6 +124,7 @@ def init_db():
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_novels_category_status_updated ON novels(category_id, status, updated_at DESC)')
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_novel_tags_tag_novel ON novel_tags(tag_id, novel_id)')
     _ensure_novel_schema(cursor)
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_novels_content_hash ON novels(content_hash)')
     cursor.execute('''
         DELETE FROM novel_tags
         WHERE novel_id NOT IN (SELECT id FROM novels)
@@ -195,9 +199,11 @@ from storage_utils import (
     _collect_novel_file_deletion_targets,
     _delete_novel_files,
     _normalize_novel_ids,
+    find_import_duplicate,
     is_supported_novel_file,
     is_text_readable_file,
     parse_import_request,
+    prepare_import_novel_metadata,
     resolve_novel_file_path,
     store_uploaded_file,
 )
@@ -1181,7 +1187,6 @@ def scan_folder_api():
     except Exception as e:
         return jsonify({'success': False, 'message': str(e)}), 500
 
-
 @app.route('/api/import/batch', methods=['POST'])
 def batch_import():
     """批量导入小说"""
@@ -1207,9 +1212,8 @@ def batch_import():
                 continue
 
             try:
-                cursor.execute('SELECT id FROM novels WHERE file_path = ?',
-                             (novel_data.get('file_path'),))
-                if cursor.fetchone():
+                novel_data = prepare_import_novel_metadata(novel_data)
+                if find_import_duplicate(cursor, novel_data):
                     skipped += 1
                     continue
 
@@ -1225,14 +1229,20 @@ def batch_import():
                         category_id = cursor.lastrowid
 
                 cursor.execute('''
-                    INSERT INTO novels (title, author, file_path, category_id, status)
-                    VALUES (?, ?, ?, ?, ?)
+                    INSERT INTO novels (
+                        title, author, file_path, category_id, status,
+                        file_size, content_hash, original_filename
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 ''', (
                     novel_data.get('title', '未命名'),
                     novel_data.get('author', ''),
                     novel_data.get('file_path'),
                     category_id,
-                    default_status
+                    default_status,
+                    novel_data.get('file_size'),
+                    novel_data.get('content_hash'),
+                    novel_data.get('original_filename')
                 ))
 
                 novel_id = cursor.lastrowid
