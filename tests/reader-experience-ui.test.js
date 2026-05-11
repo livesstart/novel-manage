@@ -11,10 +11,16 @@ const overridesCss = fs.readFileSync(path.join(root, 'static/css/overrides.css')
 
 assert.match(template, /id="reader-toc-toggle"/, 'reader should expose a table-of-contents toggle');
 assert.match(template, /id="reader-settings-toggle"/, 'reader should expose a settings toggle');
+assert.match(template, /id="reader-search-toggle"/, 'reader should expose a search toggle');
 assert.match(template, /id="reader-immersive-toggle"/, 'reader should expose an immersive mode toggle');
 assert.match(template, /id="reader-immersive-exit"/, 'reader should expose an immersive-mode exit control outside the hidden header');
 assert.match(template, /aria-label="退出沉浸阅读"/, 'reader immersive exit should be accessible after the header is hidden');
 assert.match(template, /id="reader-settings-panel"/, 'reader should render a settings panel');
+assert.match(template, /id="reader-search-panel"/, 'reader should render a search panel');
+assert.match(template, /id="reader-search-input"/, 'reader search should include a text input');
+assert.match(template, /id="reader-search-prev"/, 'reader search should include previous result navigation');
+assert.match(template, /id="reader-search-next"/, 'reader search should include next result navigation');
+assert.match(template, /id="reader-search-clear"/, 'reader search should include a clear action');
 assert.match(template, /id="reader-theme-select"/, 'reader settings should include theme selection');
 assert.match(template, /id="reader-line-height"/, 'reader settings should include line height control');
 assert.match(template, /id="reader-width"/, 'reader settings should include content width control');
@@ -33,6 +39,10 @@ assert.match(readerJs, /function updateReaderViewportProgress/, 'reader should u
 assert.match(readerJs, /function scrollReaderByPage/, 'reader should support page-wise keyboard scrolling');
 assert.match(readerJs, /function toggleReaderImmersiveMode/, 'reader should support immersive mode');
 assert.match(readerJs, /function toggleReaderToc/, 'reader should support table-of-contents toggle');
+assert.match(readerJs, /function toggleReaderSearchPanel/, 'reader should support search panel toggle');
+assert.match(readerJs, /function updateReaderSearchFromInput/, 'reader should update search results while typing');
+assert.match(readerJs, /function moveReaderSearchResult/, 'reader should navigate between search results');
+assert.match(readerJs, /reader-search-hit/, 'reader should mark search matches in rendered text');
 assert.match(readerJs, /READER_REQUEST_TIMEOUT_MS/, 'reader requests should have a timeout guard');
 assert.match(readerJs, /AbortController/, 'reader requests should abort instead of loading forever');
 assert.match(readerJs, /function fetchReaderJson/, 'reader should use a dedicated fetch helper');
@@ -43,6 +53,11 @@ assert.match(readerJs, /width:\s*1000/, 'reader should default to a wider conten
 assert.match(readerJs, /width:\s*clampReaderNumber\(settings\.width,\s*620,\s*1280,/, 'reader width preference should clamp to the expanded desktop range');
 
 assert.match(appJs, /reader-settings-toggle'\)\.addEventListener\('click',\s*toggleReaderSettingsPanel\)/, 'app should bind settings toggle');
+assert.match(appJs, /reader-search-toggle'\)\.addEventListener\('click',\s*toggleReaderSearchPanel\)/, 'app should bind search toggle');
+assert.match(appJs, /reader-search-input'\)\.addEventListener\('input',\s*updateReaderSearchFromInput\)/, 'app should bind search input');
+assert.match(appJs, /moveReaderSearchResult\(-1\)/, 'app should bind previous search result');
+assert.match(appJs, /moveReaderSearchResult\(1\)/, 'app should bind next search result');
+assert.match(appJs, /openReaderSearchPanel\(\)/, 'reader keyboard shortcuts should open reader search');
 assert.match(appJs, /reader-immersive-toggle'\)\.addEventListener\('click',\s*toggleReaderImmersiveMode\)/, 'app should bind immersive toggle');
 assert.match(appJs, /reader-immersive-exit'\)\.addEventListener\('click',\s*\(\)\s*=>\s*setReaderImmersiveMode\(false\)\)/, 'immersive exit control should leave immersive mode without closing the reader');
 assert.match(appJs, /reader-toc-toggle'\)\.addEventListener\('click',\s*toggleReaderToc\)/, 'app should bind TOC toggle');
@@ -51,6 +66,8 @@ assert.match(appJs, /scrollReaderByPage\(-1\)/, 'keyboard shortcuts should scrol
 assert.match(appJs, /if \(e\.key === 'Escape'\) {[\s\S]*readerState\.isImmersive[\s\S]*setReaderImmersiveMode\(false\);[\s\S]*return;[\s\S]*}\s*if \(\['INPUT', 'TEXTAREA', 'SELECT', 'BUTTON'\]\.includes\(e\.target\.tagName\)\) return;/, 'Escape should exit immersive mode before focused controls suppress reader shortcuts');
 
 assert.match(readerCss, /\.reader-settings-panel/, 'reader settings panel should be styled');
+assert.match(readerCss, /\.reader-search-panel/, 'reader search panel should be styled');
+assert.match(readerCss, /\.reader-search-hit\.active/, 'active reader search hit should be visually distinct');
 assert.match(readerCss, /\.reader-immersive-exit\.btn-icon\s*{[^}]*display:\s*none/s, 'immersive exit control should use a selector specific enough to stay hidden outside immersive mode');
 assert.match(readerCss, /\.reader-modal\.immersive\s+\.reader-immersive-exit\s*{[^}]*display:\s*inline-flex/s, 'immersive exit control should be visible while immersive mode hides the header');
 assert.match(readerCss, /grid-template-columns:\s*repeat\(auto-fit,\s*minmax\(170px,\s*1fr\)\)/, 'reader settings should wrap instead of clipping in narrower main panes');

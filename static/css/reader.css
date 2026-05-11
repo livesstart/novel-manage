@@ -176,6 +176,83 @@
     min-width: 0;
 }
 
+.reader-search-panel {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 24px;
+    border-bottom: 1px solid var(--border-color);
+    background: rgba(255, 255, 255, 0.96);
+    box-shadow: 0 10px 24px rgba(15, 23, 42, 0.08);
+    z-index: 3;
+}
+
+.reader-search-panel.hidden {
+    display: none;
+}
+
+.reader-search-box {
+    flex: 1;
+    min-width: 180px;
+    height: 38px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 0 12px;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius);
+    background: #ffffff;
+    color: var(--text-secondary);
+    transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.reader-search-box:focus-within {
+    border-color: rgba(79, 70, 229, 0.55);
+    box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.12);
+}
+
+.reader-search-box input {
+    width: 100%;
+    min-width: 0;
+    border: 0;
+    outline: none;
+    background: transparent;
+    color: var(--text-primary);
+    font-size: 14px;
+}
+
+.reader-search-count {
+    min-width: 58px;
+    color: var(--text-secondary);
+    font-size: 13px;
+    text-align: center;
+    font-variant-numeric: tabular-nums;
+}
+
+.reader-search-actions {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.reader-search-actions .btn-icon:disabled {
+    cursor: not-allowed;
+    opacity: 0.35;
+}
+
+.reader-search-hit {
+    padding: 0 2px;
+    border-radius: 3px;
+    background: rgba(245, 158, 11, 0.34);
+    color: inherit;
+}
+
+.reader-search-hit.active {
+    background: #f59e0b;
+    color: #111827;
+    box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.25);
+}
+
 .reader-settings-panel {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
@@ -339,6 +416,7 @@
 
 .reader-modal.immersive .reader-header,
 .reader-modal.immersive .reader-sidebar,
+.reader-modal.immersive .reader-search-panel,
 .reader-modal.immersive .reader-settings-panel {
     display: none;
 }
@@ -370,6 +448,7 @@
 
 .reader-modal.theme-sepia .reader-header,
 .reader-modal.theme-sepia .reader-nav,
+.reader-modal.theme-sepia .reader-search-panel,
 .reader-modal.theme-sepia .reader-settings-panel {
     background-color: rgba(249, 242, 225, 0.96);
     border-color: #dfcfad;
@@ -392,6 +471,7 @@
 
 .reader-modal.theme-green .reader-header,
 .reader-modal.theme-green .reader-nav,
+.reader-modal.theme-green .reader-search-panel,
 .reader-modal.theme-green .reader-settings-panel {
     background-color: rgba(242, 249, 238, 0.96);
     border-color: #c9dcc2;
@@ -412,7 +492,8 @@
 }
 
 .reader-modal.dark-theme .reader-header,
-.reader-modal.dark-theme .reader-nav {
+.reader-modal.dark-theme .reader-nav,
+.reader-modal.dark-theme .reader-search-panel {
     background-color: #242424;
     border-color: #333;
 }
@@ -432,11 +513,13 @@
 }
 
 .reader-modal.dark-theme .reader-setting-field b,
-.reader-modal.dark-theme .reader-setting-field select {
+.reader-modal.dark-theme .reader-setting-field select,
+.reader-modal.dark-theme .reader-search-box input {
     color: #e5e7eb;
 }
 
-.reader-modal.dark-theme .reader-setting-field select {
+.reader-modal.dark-theme .reader-setting-field select,
+.reader-modal.dark-theme .reader-search-box {
     background-color: #1f1f1f;
     border-color: #3f3f46;
 }
@@ -495,6 +578,23 @@
         padding: 12px;
         max-height: 42vh;
         overflow-y: auto;
+    }
+
+    .reader-search-panel {
+        flex-wrap: wrap;
+        padding: 10px 12px;
+    }
+
+    .reader-search-box {
+        flex-basis: 100%;
+    }
+
+    .reader-search-count {
+        text-align: left;
+    }
+
+    .reader-search-actions {
+        margin-left: auto;
     }
 
     .reader-content-area {

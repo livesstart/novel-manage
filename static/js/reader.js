@@ -18,6 +18,11 @@ const readerState = {
     fontSize: READER_DEFAULT_SETTINGS.fontSize,
     darkTheme: false,
     settings: loadReaderSettings(),
+    currentChapterContent: '',
+    searchQuery: '',
+    searchActiveIndex: -1,
+    searchResultCount: 0,
+    isSearchOpen: false,
     progressSaveTimer: null,
     isRestoringProgress: false,
     isSettingsOpen: false,
@@ -178,9 +183,185 @@ function showReaderEmptyState(message) {
     document.querySelector('#reader-empty p').textContent = message || '无法加载小说';
 }
 
+function countReaderSearchMatches(text, query) {
+    if (!query) return 0;
+
+    const source = String(text || '').toLocaleLowerCase();
+    const needle = String(query).toLocaleLowerCase();
+    let count = 0;
+    let offset = 0;
+
+    while (needle && offset < source.length) {
+        const index = source.indexOf(needle, offset);
+        if (index === -1) break;
+        count += 1;
+        offset = index + needle.length;
+    }
+
+    return count;
+}
+
+function buildReaderSearchHighlightedHtml(text, query, context) {
+    if (!query) {
+        return escapeHtml(text);
+    }
+
+    const source = String(text || '');
+    const lowerSource = source.toLocaleLowerCase();
+    const needle = String(query).toLocaleLowerCase();
+    let offset = 0;
+    let html = '';
+
+    while (needle && offset < source.length) {
+        const index = lowerSource.indexOf(needle, offset);
+        if (index === -1) break;
+
+        html += escapeHtml(source.slice(offset, index));
+        const matchIndex = context.index;
+        const activeClass = matchIndex === readerState.searchActiveIndex ? ' active' : '';
+        html += `<mark class="reader-search-hit${activeClass}" data-reader-search-index="${matchIndex}">${escapeHtml(source.slice(index, index + needle.length))}</mark>`;
+        context.index += 1;
+        offset = index + needle.length;
+    }
+
+    html += escapeHtml(source.slice(offset));
+    return html;
+}
+
+function syncReaderSearchControls() {
+    const input = document.getElementById('reader-search-input');
+    const count = document.getElementById('reader-search-count');
+    const prev = document.getElementById('reader-search-prev');
+    const next = document.getElementById('reader-search-next');
+    const toggle = document.getElementById('reader-search-toggle');
+    const hasQuery = Boolean(readerState.searchQuery);
+    const hasResults = readerState.searchResultCount > 0;
+
+    if (input && input.value !== readerState.searchQuery) {
+        input.value = readerState.searchQuery;
+    }
+
+    if (count) {
+        if (!hasQuery) {
+            count.textContent = '0 / 0';
+        } else if (hasResults) {
+            count.textContent = `${readerState.searchActiveIndex + 1} / ${readerState.searchResultCount}`;
+        } else {
+            count.textContent = '未找到';
+        }
+    }
+
+    if (prev) prev.disabled = !hasResults;
+    if (next) next.disabled = !hasResults;
+    if (toggle) toggle.setAttribute('aria-expanded', String(readerState.isSearchOpen));
+}
+
+function renderReaderContentWithSearch(options = {}) {
+    const contentDiv = document.getElementById('reader-text');
+    const content = readerState.currentChapterContent || '';
+    const query = readerState.searchQuery.trim();
+    const scrollContainer = document.getElementById('reader-content');
+    const previousScrollTop = scrollContainer ? scrollContainer.scrollTop : 0;
+
+    readerState.searchResultCount = countReaderSearchMatches(content, query);
+    if (!query || readerState.searchResultCount === 0) {
+        readerState.searchActiveIndex = -1;
+    } else if (readerState.searchActiveIndex < 0 || readerState.searchActiveIndex >= readerState.searchResultCount) {
+        readerState.searchActiveIndex = 0;
+    }
+
+    const context = { index: 0 };
+    const paragraphs = content.split('\n')
+        .filter(line => line.trim())
+        .map(line => `<p>${buildReaderSearchHighlightedHtml(line, query, context)}</p>`)
+        .join('');
+
+    contentDiv.innerHTML = paragraphs || '<p>本章暂无内容</p>';
+    syncReaderSearchControls();
+
+    if (options.preserveScroll && scrollContainer) {
+        scrollContainer.scrollTop = previousScrollTop;
+        updateReaderViewportProgress();
+    }
+}
+
+function scrollReaderSearchHit() {
+    if (readerState.searchActiveIndex < 0) return;
+
+    requestAnimationFrame(() => {
+        const hit = document.querySelector(`.reader-search-hit[data-reader-search-index="${readerState.searchActiveIndex}"]`);
+        if (hit) {
+            hit.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+    });
+}
+
+function updateReaderSearchFromInput() {
+    const input = document.getElementById('reader-search-input');
+    const query = (input?.value || '').trim();
+    if (query === readerState.searchQuery) return;
+
+    readerState.searchQuery = query;
+    readerState.searchActiveIndex = query ? 0 : -1;
+    renderReaderContentWithSearch({ preserveScroll: true });
+    applyReaderSettings();
+
+    if (readerState.searchResultCount > 0) {
+        scrollReaderSearchHit();
+    }
+}
+
+function moveReaderSearchResult(direction) {
+    if (readerState.searchResultCount <= 0) return;
+
+    readerState.searchActiveIndex =
+        (readerState.searchActiveIndex + direction + readerState.searchResultCount) % readerState.searchResultCount;
+    renderReaderContentWithSearch({ preserveScroll: true });
+    applyReaderSettings();
+    scrollReaderSearchHit();
+}
+
+function clearReaderSearch() {
+    readerState.searchQuery = '';
+    readerState.searchActiveIndex = -1;
+    readerState.searchResultCount = 0;
+    renderReaderContentWithSearch({ preserveScroll: true });
+    applyReaderSettings();
+    document.getElementById('reader-search-input')?.focus();
+}
+
+function openReaderSearchPanel() {
+    const panel = document.getElementById('reader-search-panel');
+    readerState.isSearchOpen = true;
+    closeReaderSettingsPanel();
+    if (panel) panel.classList.remove('hidden');
+    syncReaderSearchControls();
+    document.getElementById('reader-search-input')?.focus();
+}
+
+function closeReaderSearchPanel() {
+    const panel = document.getElementById('reader-search-panel');
+    readerState.isSearchOpen = false;
+    if (panel) panel.classList.add('hidden');
+    syncReaderSearchControls();
+}
+
+function toggleReaderSearchPanel() {
+    if (readerState.isSearchOpen) {
+        closeReaderSearchPanel();
+    } else {
+        openReaderSearchPanel();
+    }
+}
+
 async function openReader(novelId) {
     readerState.novelId = novelId;
     readerState.currentChapter = 0;
+    readerState.currentChapterContent = '';
+    readerState.searchQuery = '';
+    readerState.searchActiveIndex = -1;
+    readerState.searchResultCount = 0;
+    readerState.isSearchOpen = false;
     readerState.settings = loadReaderSettings();
     readerState.isImmersive = false;
     if (readerState.progressSaveTimer) {
@@ -190,6 +371,7 @@ async function openReader(novelId) {
 
     openModal('reader-modal');
     applyReaderSettings();
+    closeReaderSearchPanel();
     closeReaderSettingsPanel();
     setReaderImmersiveMode(false);
     syncReaderResponsiveState();
@@ -338,16 +520,13 @@ async function saveReadingProgressNow() {
 
 function renderReaderChapter(chapter, index, options = {}) {
     readerState.currentChapter = index;
+    readerState.currentChapterContent = chapter.content || '';
+    if (readerState.searchQuery) {
+        readerState.searchActiveIndex = 0;
+    }
 
     document.getElementById('reader-chapter-title').textContent = chapter.title;
-
-    const contentDiv = document.getElementById('reader-text');
-    const paragraphs = (chapter.content || '').split('\n')
-        .filter(line => line.trim())
-        .map(line => `<p>${escapeHtml(line)}</p>`)
-        .join('');
-
-    contentDiv.innerHTML = paragraphs || '<p>本章暂无内容</p>';
+    renderReaderContentWithSearch();
 
     document.getElementById('reader-progress').textContent =
         `${index + 1} / ${chapter.total_chapters}`;
@@ -394,38 +573,7 @@ async function loadChapter(index, options = {}) {
 
         if (res.success) {
             const chapter = res.data.chapter;
-
-            document.getElementById('reader-chapter-title').textContent = chapter.title;
-
-            const contentDiv = document.getElementById('reader-text');
-            const paragraphs = chapter.content.split('\n')
-                .filter(line => line.trim())
-                .map(line => `<p>${escapeHtml(line)}</p>`)
-                .join('');
-
-            contentDiv.innerHTML = paragraphs || '<p>本章无内容</p>';
-
-            document.getElementById('reader-progress').textContent =
-                `${index + 1} / ${chapter.total_chapters}`;
-
-            document.getElementById('reader-prev-chapter').disabled = index === 0;
-            document.getElementById('reader-next-chapter').disabled =
-                index >= chapter.total_chapters - 1;
-
-            document.getElementById('reader-loading').classList.add('hidden');
-            document.getElementById('reader-text').classList.remove('hidden');
-            applyReaderSettings();
-
-            if (Number.isFinite(Number(options.scrollPercent)) && Number(options.scrollPercent) > 0) {
-                restoreReaderScrollPercent(options.scrollPercent);
-            } else {
-                document.getElementById('reader-content').scrollTop = 0;
-                updateReaderViewportProgress();
-            }
-
-            if (!options.skipSave) {
-                scheduleSaveReadingProgress(0);
-            }
+            renderReaderChapter(chapter, index, options);
         } else {
             showReaderEmptyState(res.message || '章节加载失败');
         }
@@ -486,6 +634,10 @@ function toggleReaderSettingsPanel() {
     const button = document.getElementById('reader-settings-toggle');
     readerState.isSettingsOpen = !readerState.isSettingsOpen;
 
+    if (readerState.isSettingsOpen) {
+        closeReaderSearchPanel();
+    }
+
     panel.classList.toggle('hidden', !readerState.isSettingsOpen);
     button.setAttribute('aria-expanded', String(readerState.isSettingsOpen));
 }
@@ -542,6 +694,7 @@ function setReaderImmersiveMode(enabled) {
     }
 
     if (readerState.isImmersive) {
+        closeReaderSearchPanel();
         closeReaderSettingsPanel();
     }
 }

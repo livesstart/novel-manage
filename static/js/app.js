@@ -381,6 +381,11 @@ function bindEvents() {
     document.getElementById('reader-line-height').addEventListener('input', updateReaderSettingsFromControls);
     document.getElementById('reader-width').addEventListener('input', updateReaderSettingsFromControls);
     document.getElementById('reader-spacing').addEventListener('input', updateReaderSettingsFromControls);
+    document.getElementById('reader-search-toggle').addEventListener('click', toggleReaderSearchPanel);
+    document.getElementById('reader-search-input').addEventListener('input', updateReaderSearchFromInput);
+    document.getElementById('reader-search-prev').addEventListener('click', () => moveReaderSearchResult(-1));
+    document.getElementById('reader-search-next').addEventListener('click', () => moveReaderSearchResult(1));
+    document.getElementById('reader-search-clear').addEventListener('click', clearReaderSearch);
     document.getElementById('reader-settings-toggle').addEventListener('click', toggleReaderSettingsPanel);
     document.getElementById('reader-immersive-toggle').addEventListener('click', toggleReaderImmersiveMode);
     document.getElementById('reader-immersive-exit').addEventListener('click', () => setReaderImmersiveMode(false));
@@ -390,6 +395,12 @@ function bindEvents() {
     document.addEventListener('keydown', (e) => {
         // 只在阅读器打开时生效
         if (!document.getElementById('reader-modal').classList.contains('active')) return;
+
+        if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'f') {
+            e.preventDefault();
+            openReaderSearchPanel();
+            return;
+        }
 
         if (e.key === 'Escape') {
             if (readerState.isImmersive) {

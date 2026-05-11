@@ -1368,6 +1368,9 @@
                     <button class="btn-icon" id="reader-theme-toggle" title="切换主题">
                         <i class="fas fa-moon"></i>
                     </button>
+                    <button class="btn-icon" id="reader-search-toggle" title="搜索本章" aria-expanded="false">
+                        <i class="fas fa-search"></i>
+                    </button>
                     <button class="btn-icon" id="reader-settings-toggle" title="阅读设置" aria-expanded="false">
                         <i class="fas fa-sliders-h"></i>
                     </button>
@@ -1393,6 +1396,24 @@
                 </div>
 
                 <div class="reader-main">
+                    <div class="reader-search-panel hidden" id="reader-search-panel" aria-label="阅读搜索">
+                        <label class="reader-search-box" for="reader-search-input">
+                            <i class="fas fa-search"></i>
+                            <input type="search" id="reader-search-input" placeholder="搜索本章内容" autocomplete="off">
+                        </label>
+                        <span class="reader-search-count" id="reader-search-count">0 / 0</span>
+                        <div class="reader-search-actions">
+                            <button class="btn-icon" id="reader-search-prev" title="上一个搜索结果" disabled>
+                                <i class="fas fa-chevron-up"></i>
+                            </button>
+                            <button class="btn-icon" id="reader-search-next" title="下一个搜索结果" disabled>
+                                <i class="fas fa-chevron-down"></i>
+                            </button>
+                            <button class="btn-icon" id="reader-search-clear" title="清空搜索">
+                                <i class="fas fa-times"></i>
+                            </button>
+                        </div>
+                    </div>
                     <div class="reader-settings-panel hidden" id="reader-settings-panel" aria-label="阅读设置">
                         <label class="reader-setting-field">
                             <span>主题</span>
