@@ -116,6 +116,41 @@ def ensure_character_analysis_schema(cursor):
         )
     ''')
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_novel_settings_novel ON novel_settings(novel_id, sort_order)')
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS novel_writing_style_analysis_runs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            novel_id INTEGER NOT NULL UNIQUE,
+            status TEXT DEFAULT 'pending',
+            model TEXT,
+            source_excerpt_chars INTEGER DEFAULT 0,
+            error_message TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            finished_at TIMESTAMP,
+            FOREIGN KEY (novel_id) REFERENCES novels(id) ON DELETE CASCADE
+        )
+    ''')
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS novel_writing_styles (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            novel_id INTEGER NOT NULL UNIQUE,
+            summary TEXT,
+            narrative_perspective TEXT,
+            language_texture TEXT,
+            pacing TEXT,
+            description_focus TEXT,
+            dialogue_style TEXT,
+            emotional_tone TEXT,
+            signature_techniques_json TEXT DEFAULT '[]',
+            examples_json TEXT DEFAULT '[]',
+            imitation_guide TEXT,
+            style_prompt TEXT,
+            confidence REAL DEFAULT 0,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (novel_id) REFERENCES novels(id) ON DELETE CASCADE
+        )
+    ''')
 
 
 def register_ai_routes(app, *, get_db, resolve_novel_file_path, is_text_readable_file, detect_encoding):
@@ -517,6 +552,154 @@ def register_ai_routes(app, *, get_db, resolve_novel_file_path, is_text_readable
         ]
 
 
+    def normalize_writing_style_techniques(raw_items):
+        techniques = []
+        for item in raw_items or []:
+            if isinstance(item, str):
+                item = {'name': item}
+            if not isinstance(item, dict):
+                continue
+
+            technique = {
+                'name': normalize_short_text(
+                    item.get('name') or item.get('title') or item.get('technique'),
+                    max_length=48
+                ),
+                'description': normalize_short_text(
+                    item.get('description') or item.get('summary') or item.get('analysis'),
+                    max_length=260
+                ),
+                'evidence': normalize_short_text(item.get('evidence'), max_length=220),
+                'confidence': clamp_confidence(item.get('confidence')),
+            }
+            if technique['name'] or technique['description'] or technique['evidence']:
+                techniques.append(technique)
+            if len(techniques) >= 8:
+                break
+
+        return techniques
+
+
+    def normalize_writing_style_examples(raw_items):
+        examples = []
+        for item in raw_items or []:
+            if isinstance(item, str):
+                item = {'evidence': item}
+            if not isinstance(item, dict):
+                continue
+
+            example = {
+                'label': normalize_short_text(
+                    item.get('label') or item.get('name') or item.get('title'),
+                    max_length=48
+                ),
+                'analysis': normalize_short_text(
+                    item.get('analysis') or item.get('description') or item.get('summary'),
+                    max_length=260
+                ),
+                'evidence': normalize_short_text(item.get('evidence') or item.get('excerpt'), max_length=220),
+                'confidence': clamp_confidence(item.get('confidence')),
+            }
+            if example['label'] or example['analysis'] or example['evidence']:
+                examples.append(example)
+            if len(examples) >= 6:
+                break
+
+        return examples
+
+
+    def normalize_writing_style_analysis_payload(payload):
+        source = payload if isinstance(payload, dict) else {}
+        return {
+            'summary': normalize_short_text(source.get('summary') or source.get('overview'), max_length=260),
+            'narrative_perspective': normalize_short_text(
+                source.get('narrative_perspective') or source.get('perspective'),
+                max_length=240
+            ),
+            'language_texture': normalize_short_text(
+                source.get('language_texture') or source.get('language_style'),
+                max_length=240
+            ),
+            'pacing': normalize_short_text(source.get('pacing') or source.get('rhythm'), max_length=240),
+            'description_focus': normalize_short_text(
+                source.get('description_focus') or source.get('descriptive_focus'),
+                max_length=240
+            ),
+            'dialogue_style': normalize_short_text(source.get('dialogue_style'), max_length=240),
+            'emotional_tone': normalize_short_text(
+                source.get('emotional_tone') or source.get('tone'),
+                max_length=240
+            ),
+            'signature_techniques': normalize_writing_style_techniques(
+                source.get('signature_techniques') or source.get('techniques')
+            ),
+            'examples': normalize_writing_style_examples(
+                source.get('examples') or source.get('representative_examples')
+            ),
+            'imitation_guide': normalize_short_text(
+                source.get('imitation_guide') or source.get('writing_guide') or source.get('style_guide'),
+                max_length=900
+            ),
+            'style_prompt': normalize_short_text(
+                source.get('style_prompt') or source.get('prompt') or source.get('imitation_prompt'),
+                max_length=1200
+            ),
+            'confidence': clamp_confidence(source.get('confidence')),
+        }
+
+
+    def has_writing_style_content(style):
+        text_fields = (
+            'summary',
+            'narrative_perspective',
+            'language_texture',
+            'pacing',
+            'description_focus',
+            'dialogue_style',
+            'emotional_tone',
+            'imitation_guide',
+            'style_prompt',
+        )
+        return any(style.get(field) for field in text_fields) or bool(style.get('signature_techniques')) or bool(style.get('examples'))
+
+
+    def build_writing_style_analysis_messages(novel, content_excerpt):
+        context_blocks = [
+            f'标题：{novel.get("title") or "未提供"}',
+            f'作者：{novel.get("author") or "未提供"}',
+            f'简介：{novel.get("description") or "无"}',
+        ]
+        if content_excerpt:
+            context_blocks.append(f'正文片段：\n{content_excerpt[:12000]}')
+
+        user_prompt = '\n\n'.join(context_blocks) + textwrap.dedent("""
+
+    请分析这本小说已经体现出的写作风格，并整理成可用于后续创作参考的风格档案和仿写指南。
+
+    要求：
+    1. 只输出一个 JSON 对象，不要输出 Markdown。
+    2. JSON 格式必须为：
+       {"summary":"整体写作风格概述","narrative_perspective":"叙事视角","language_texture":"语言质感","pacing":"节奏特征","description_focus":"描写重点","dialogue_style":"对话风格","emotional_tone":"情绪基调","signature_techniques":[{"name":"技法名称","description":"技法说明","evidence":"证据片段","confidence":0.8}],"examples":[{"label":"片段标签","analysis":"片段体现的风格特征","evidence":"证据片段","confidence":0.8}],"imitation_guide":"面向后续写作的具体指南","style_prompt":"可复制给 AI 的风格复刻提示词","confidence":0.8}
+    3. 只基于已提供文本判断，不要编造未出现的剧情、人物关系或结局。
+    4. signature_techniques 最多 8 条，examples 最多 6 条。
+    5. evidence 必须是能支持判断的简短文本依据。
+    6. imitation_guide 要写成可执行建议，说明句式、节奏、描写重点、对话和情绪控制方式。
+    7. style_prompt 要能直接复制给 AI 使用，要求简洁但足够具体。
+    8. confidence 用 0 到 1 的数字表示整体可信度。
+    """)
+
+        return [
+            {
+                'role': 'system',
+                'content': '你是一个严谨的小说写作风格分析助手，只根据文本证据总结叙事风格、语言特征和仿写方法。'
+            },
+            {
+                'role': 'user',
+                'content': user_prompt.strip()
+            }
+        ]
+
+
     def serialize_setting_analysis(novel_id):
         conn = get_db()
         cursor = conn.cursor()
@@ -609,6 +792,123 @@ def register_ai_routes(app, *, get_db, resolve_novel_file_path, is_text_readable
                 novel_id, status, model, setting_count,
                 source_excerpt_chars, error_message, updated_at
             ) VALUES (?, 'failed', ?, 0, ?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(novel_id) DO UPDATE SET
+                status = 'failed',
+                model = excluded.model,
+                source_excerpt_chars = excluded.source_excerpt_chars,
+                error_message = excluded.error_message,
+                updated_at = CURRENT_TIMESTAMP
+        ''', (novel_id, model, source_excerpt_chars, error_message[:500]))
+        conn.commit()
+        conn.close()
+
+
+    def serialize_writing_style_analysis(novel_id):
+        conn = get_db()
+        cursor = conn.cursor()
+
+        cursor.execute('''
+            SELECT *
+            FROM novel_writing_style_analysis_runs
+            WHERE novel_id = ?
+        ''', (novel_id,))
+        run = cursor.fetchone()
+
+        cursor.execute('''
+            SELECT *
+            FROM novel_writing_styles
+            WHERE novel_id = ?
+        ''', (novel_id,))
+        style_row = cursor.fetchone()
+        conn.close()
+
+        style = dict(style_row) if style_row else {}
+        run_data = dict(run) if run else None
+        status = (run_data or {}).get('status') or ('completed' if style else 'empty')
+        return {
+            'novel_id': novel_id,
+            'analysis_status': status,
+            'analyzed_at': (run_data or {}).get('finished_at') or (run_data or {}).get('updated_at'),
+            'error_message': (run_data or {}).get('error_message'),
+            'summary': style.get('summary') or '',
+            'narrative_perspective': style.get('narrative_perspective') or '',
+            'language_texture': style.get('language_texture') or '',
+            'pacing': style.get('pacing') or '',
+            'description_focus': style.get('description_focus') or '',
+            'dialogue_style': style.get('dialogue_style') or '',
+            'emotional_tone': style.get('emotional_tone') or '',
+            'signature_techniques': parse_json_list(style.get('signature_techniques_json')),
+            'examples': parse_json_list(style.get('examples_json')),
+            'imitation_guide': style.get('imitation_guide') or '',
+            'style_prompt': style.get('style_prompt') or '',
+            'confidence': clamp_confidence(style.get('confidence')),
+        }
+
+
+    def replace_writing_style_analysis(novel_id, style, *, model='', source_excerpt_chars=0):
+        conn = get_db()
+        cursor = conn.cursor()
+
+        try:
+            cursor.execute('DELETE FROM novel_writing_styles WHERE novel_id = ?', (novel_id,))
+            cursor.execute('''
+                INSERT INTO novel_writing_styles (
+                    novel_id, summary, narrative_perspective, language_texture,
+                    pacing, description_focus, dialogue_style, emotional_tone,
+                    signature_techniques_json, examples_json, imitation_guide,
+                    style_prompt, confidence, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            ''', (
+                novel_id,
+                style['summary'],
+                style['narrative_perspective'],
+                style['language_texture'],
+                style['pacing'],
+                style['description_focus'],
+                style['dialogue_style'],
+                style['emotional_tone'],
+                json.dumps(style['signature_techniques'], ensure_ascii=False),
+                json.dumps(style['examples'], ensure_ascii=False),
+                style['imitation_guide'],
+                style['style_prompt'],
+                style['confidence'],
+            ))
+
+            cursor.execute('''
+                INSERT INTO novel_writing_style_analysis_runs (
+                    novel_id, status, model, source_excerpt_chars,
+                    error_message, updated_at, finished_at
+                ) VALUES (?, 'completed', ?, ?, NULL, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                ON CONFLICT(novel_id) DO UPDATE SET
+                    status = 'completed',
+                    model = excluded.model,
+                    source_excerpt_chars = excluded.source_excerpt_chars,
+                    error_message = NULL,
+                    updated_at = CURRENT_TIMESTAMP,
+                    finished_at = CURRENT_TIMESTAMP
+            ''', (
+                novel_id,
+                model,
+                source_excerpt_chars,
+            ))
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
+        return serialize_writing_style_analysis(novel_id)
+
+
+    def mark_writing_style_analysis_failed(novel_id, error_message, *, model='', source_excerpt_chars=0):
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute('''
+            INSERT INTO novel_writing_style_analysis_runs (
+                novel_id, status, model, source_excerpt_chars,
+                error_message, updated_at
+            ) VALUES (?, 'failed', ?, ?, ?, CURRENT_TIMESTAMP)
             ON CONFLICT(novel_id) DO UPDATE SET
                 status = 'failed',
                 model = excluded.model,
@@ -1294,6 +1594,19 @@ def register_ai_routes(app, *, get_db, resolve_novel_file_path, is_text_readable
         })
 
 
+    @app.route('/api/novels/<int:novel_id>/writing-style', methods=['GET'])
+    def get_novel_writing_style_analysis(novel_id):
+        """Get a single novel's writing style analysis."""
+        novel = get_novel_detail_record(novel_id)
+        if not novel:
+            return jsonify({'success': False, 'message': '小说不存在'}), 404
+
+        return jsonify({
+            'success': True,
+            'data': serialize_writing_style_analysis(novel_id)
+        })
+
+
     @app.route('/api/ai/novels/<int:novel_id>/characters/analyze', methods=['POST'])
     def analyze_novel_characters(novel_id):
         """使用 AI 分析单本小说角色和角色关系。"""
@@ -1397,6 +1710,68 @@ def register_ai_routes(app, *, get_db, resolve_novel_file_path, is_text_readable
         except Exception as e:
             error_message = str(e)
             mark_setting_analysis_failed(
+                novel_id,
+                error_message,
+                model=model,
+                source_excerpt_chars=len(content_excerpt)
+            )
+            return jsonify({'success': False, 'message': error_message}), 500
+
+
+    @app.route('/api/ai/novels/<int:novel_id>/writing-style/analyze', methods=['POST'])
+    def analyze_novel_writing_style(novel_id):
+        """Use AI to analyze a single novel's writing style."""
+        novel = get_novel_detail_record(novel_id)
+        if not novel:
+            return jsonify({'success': False, 'message': '小说不存在'}), 404
+
+        content_excerpt = extract_text_excerpt(novel.get('file_path'), max_chars=12000)
+        if not novel.get('title') and not novel.get('description') and not content_excerpt:
+            return jsonify({'success': False, 'message': '请先填写书名，或提供可读取的 TXT 文件'}), 400
+
+        client = get_ai_client()
+        if not client:
+            return jsonify({'success': False, 'message': '请先在 AI 配置中激活可用模型'}), 400
+
+        active_config = AIConfig.get_active_config() or {}
+        model = active_config.get('model') or ''
+        messages = build_writing_style_analysis_messages(novel, content_excerpt)
+
+        try:
+            response_text = client.chat(messages, stream=False)
+            response_data = extract_json_object(response_text)
+            style = normalize_writing_style_analysis_payload(response_data)
+
+            if not has_writing_style_content(style):
+                error_message = 'AI 未识别到可用写作风格，请换更多正文内容后重试'
+                mark_writing_style_analysis_failed(
+                    novel_id,
+                    error_message,
+                    model=model,
+                    source_excerpt_chars=len(content_excerpt)
+                )
+                return jsonify({'success': False, 'message': error_message}), 500
+
+            analysis = replace_writing_style_analysis(
+                novel_id,
+                style,
+                model=model,
+                source_excerpt_chars=len(content_excerpt)
+            )
+            analysis['used_excerpt'] = bool(content_excerpt)
+            return jsonify({'success': True, 'data': analysis})
+        except (ValueError, RuntimeError) as e:
+            error_message = str(e)
+            mark_writing_style_analysis_failed(
+                novel_id,
+                error_message,
+                model=model,
+                source_excerpt_chars=len(content_excerpt)
+            )
+            return jsonify({'success': False, 'message': error_message}), 422
+        except Exception as e:
+            error_message = str(e)
+            mark_writing_style_analysis_failed(
                 novel_id,
                 error_message,
                 model=model,

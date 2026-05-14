@@ -638,6 +638,10 @@
                         <i class="fas fa-scroll"></i>
                         设定集
                     </button>
+                    <button class="novel-detail-tab" id="novel-detail-tab-writing-style" type="button" role="tab" aria-selected="false" data-detail-tab="writing-style">
+                        <i class="fas fa-pen-nib"></i>
+                        写作风格
+                    </button>
                     <button class="novel-detail-tab" id="novel-detail-tab-characters" type="button" role="tab" aria-selected="false" data-detail-tab="characters">
                         <i class="fas fa-address-card"></i>
                         角色卡
@@ -707,6 +711,54 @@
                             </div>
                             <div class="novel-setting-list" id="novel-setting-list">
                                 <div class="novel-setting-empty">暂无小说设定数据</div>
+                            </div>
+                        </div>
+                    </section>
+
+                    <section class="novel-detail-panel" id="novel-detail-panel-writing-style" role="tabpanel" data-detail-panel="writing-style" hidden>
+                        <div class="novel-writing-style-panel" id="novel-writing-style-panel">
+                            <div class="novel-writing-style-head">
+                                <div>
+                                    <h4>写作风格</h4>
+                                    <p id="novel-writing-style-status">尚未提取写作风格</p>
+                                </div>
+                                <button class="btn btn-sm btn-secondary" id="btn-detail-analyze-writing-style">
+                                    <i class="fas fa-wand-magic-sparkles"></i>
+                                    AI 提取风格
+                                </button>
+                            </div>
+                            <div class="novel-writing-style-summary-card">
+                                <div>
+                                    <span>风格总览</span>
+                                    <p id="novel-writing-style-summary">暂无写作风格数据</p>
+                                </div>
+                                <strong id="novel-writing-style-confidence">可信度 --</strong>
+                            </div>
+                            <div class="novel-writing-style-section">
+                                <h5>分析维度</h5>
+                                <div class="novel-writing-style-grid" id="novel-writing-style-dimensions"></div>
+                            </div>
+                            <div class="novel-writing-style-section">
+                                <h5>代表技法</h5>
+                                <div class="novel-writing-style-items" id="novel-writing-style-techniques"></div>
+                            </div>
+                            <div class="novel-writing-style-section">
+                                <h5>代表片段</h5>
+                                <div class="novel-writing-style-items" id="novel-writing-style-examples"></div>
+                            </div>
+                            <div class="novel-writing-style-section">
+                                <h5>仿写指南</h5>
+                                <p class="novel-writing-style-guide" id="novel-writing-style-guide">暂无仿写指南</p>
+                            </div>
+                            <div class="novel-writing-style-section">
+                                <div class="novel-writing-style-prompt-head">
+                                    <h5>风格提示词</h5>
+                                    <button class="btn btn-sm btn-secondary" id="btn-copy-writing-style-prompt">
+                                        <i class="fas fa-copy"></i>
+                                        复制
+                                    </button>
+                                </div>
+                                <pre class="novel-writing-style-prompt" id="novel-writing-style-prompt">暂无风格提示词</pre>
                             </div>
                         </div>
                     </section>

@@ -16,6 +16,7 @@ const state = {
     detailNovel: null,
     detailCharacterAnalysis: null,
     detailSettingAnalysis: null,
+    detailWritingStyleAnalysis: null,
     authStatus: null,
     editingCategory: null,
     editingTag: null,

@@ -704,6 +704,151 @@ async function analyzeNovelSettingsWithAI(novelId) {
     }
 }
 
+function resetNovelWritingStyleAnalysis() {
+    state.detailWritingStyleAnalysis = null;
+    document.getElementById('novel-writing-style-status').textContent = '尚未提取写作风格';
+    document.getElementById('novel-writing-style-status').className = '';
+    document.getElementById('novel-writing-style-summary').textContent = '暂无写作风格数据';
+    document.getElementById('novel-writing-style-confidence').textContent = '可信度 --';
+    document.getElementById('novel-writing-style-dimensions').innerHTML = '<div class="novel-writing-style-empty">暂无分析维度</div>';
+    document.getElementById('novel-writing-style-techniques').innerHTML = '<div class="novel-writing-style-empty">暂无代表技法</div>';
+    document.getElementById('novel-writing-style-examples').innerHTML = '<div class="novel-writing-style-empty">暂无代表片段</div>';
+    document.getElementById('novel-writing-style-guide').textContent = '暂无仿写指南';
+    document.getElementById('novel-writing-style-prompt').textContent = '暂无风格提示词';
+}
+
+function renderWritingStyleCard(label, value) {
+    return `
+        <article class="novel-writing-style-card">
+            <span>${escapeHtml(label)}</span>
+            <p>${escapeHtml(value || '暂无')}</p>
+        </article>
+    `;
+}
+
+function renderWritingStyleItems(items = [], { titleKey = 'name', bodyKey = 'description', emptyText = '暂无数据' } = {}) {
+    if (!Array.isArray(items) || items.length === 0) {
+        return `<div class="novel-writing-style-empty">${escapeHtml(emptyText)}</div>`;
+    }
+
+    return items.map(item => `
+        <article class="novel-writing-style-item">
+            <div class="novel-writing-style-item-head">
+                <strong>${escapeHtml(item?.[titleKey] || '未命名')}</strong>
+                <span>可信度 ${formatConfidence(item?.confidence)}</span>
+            </div>
+            <p>${escapeHtml(item?.[bodyKey] || '暂无说明')}</p>
+            <div class="novel-writing-style-evidence">${escapeHtml(item?.evidence || '暂无证据片段')}</div>
+        </article>
+    `).join('');
+}
+
+function renderNovelWritingStyleAnalysis(analysis) {
+    state.detailWritingStyleAnalysis = analysis;
+    const status = analysis?.analysis_status || 'empty';
+    const statusEl = document.getElementById('novel-writing-style-status');
+    const hasStyle = Boolean(
+        analysis?.summary ||
+        analysis?.imitation_guide ||
+        analysis?.style_prompt ||
+        (Array.isArray(analysis?.signature_techniques) && analysis.signature_techniques.length) ||
+        (Array.isArray(analysis?.examples) && analysis.examples.length)
+    );
+
+    if (status === 'failed') {
+        statusEl.textContent = analysis.error_message || '上次提取失败';
+        statusEl.className = 'failed';
+    } else if (hasStyle) {
+        statusEl.textContent = '已提取写作风格';
+        statusEl.className = 'completed';
+    } else {
+        statusEl.textContent = '尚未提取写作风格';
+        statusEl.className = '';
+    }
+
+    const dimensions = [
+        ['叙事视角', analysis?.narrative_perspective],
+        ['语言质感', analysis?.language_texture],
+        ['节奏特征', analysis?.pacing],
+        ['描写重点', analysis?.description_focus],
+        ['对话风格', analysis?.dialogue_style],
+        ['情绪基调', analysis?.emotional_tone]
+    ];
+
+    document.getElementById('novel-writing-style-summary').textContent = analysis?.summary || '暂无写作风格数据';
+    document.getElementById('novel-writing-style-confidence').textContent = `可信度 ${formatConfidence(analysis?.confidence)}`;
+    document.getElementById('novel-writing-style-dimensions').innerHTML = dimensions
+        .map(([label, value]) => renderWritingStyleCard(label, value))
+        .join('');
+    document.getElementById('novel-writing-style-techniques').innerHTML = renderWritingStyleItems(
+        analysis?.signature_techniques,
+        { titleKey: 'name', bodyKey: 'description', emptyText: '暂无代表技法' }
+    );
+    document.getElementById('novel-writing-style-examples').innerHTML = renderWritingStyleItems(
+        analysis?.examples,
+        { titleKey: 'label', bodyKey: 'analysis', emptyText: '暂无代表片段' }
+    );
+    document.getElementById('novel-writing-style-guide').textContent = analysis?.imitation_guide || '暂无仿写指南';
+    document.getElementById('novel-writing-style-prompt').textContent = analysis?.style_prompt || '暂无风格提示词';
+}
+
+async function loadNovelWritingStyleAnalysis(novelId) {
+    try {
+        const res = await api.get(`/api/novels/${novelId}/writing-style`);
+        if (!res.success) {
+            document.getElementById('novel-writing-style-status').textContent = res.message || '写作风格数据加载失败';
+            return;
+        }
+        renderNovelWritingStyleAnalysis(res.data);
+    } catch (err) {
+        console.warn('加载写作风格数据失败:', err);
+        document.getElementById('novel-writing-style-status').textContent = '写作风格数据加载失败';
+    }
+}
+
+async function analyzeNovelWritingStyleWithAI(novelId) {
+    const button = document.getElementById('btn-detail-analyze-writing-style');
+    const originalHtml = button.innerHTML;
+    button.disabled = true;
+    button.innerHTML = '<span class="loading"></span> 提取中';
+    document.getElementById('novel-writing-style-status').textContent = 'AI 正在提取写作风格...';
+
+    try {
+        const res = await api.post(`/api/ai/novels/${novelId}/writing-style/analyze`, {});
+        if (!res.success) {
+            showToast(res.message || '写作风格提取失败', 'error');
+            await loadNovelWritingStyleAnalysis(novelId);
+            return;
+        }
+
+        renderNovelWritingStyleAnalysis(res.data);
+        switchNovelDetailTab('writing-style');
+        showToast('已提取写作风格', 'success');
+    } catch (err) {
+        console.error('AI 提取写作风格失败:', err);
+        showToast('AI 提取写作风格失败: ' + err.message, 'error');
+    } finally {
+        button.disabled = false;
+        button.innerHTML = originalHtml;
+    }
+}
+
+async function copyNovelWritingStylePrompt() {
+    const prompt = state.detailWritingStyleAnalysis?.style_prompt || '';
+    if (!prompt) {
+        showToast('暂无可复制的风格提示词', 'warning');
+        return;
+    }
+
+    try {
+        await navigator.clipboard.writeText(prompt);
+        showToast('已复制风格提示词', 'success');
+    } catch (err) {
+        console.error('复制风格提示词失败:', err);
+        showToast('复制风格提示词失败', 'error');
+    }
+}
+
 function renderCharacterBadges(items = []) {
     if (!Array.isArray(items) || items.length === 0) return '';
     return `
@@ -984,6 +1129,7 @@ function renderNovelDetail(novel) {
 
     resetNovelCharacterAnalysis();
     resetNovelSettingAnalysis();
+    resetNovelWritingStyleAnalysis();
     switchNovelDetailTab('overview');
     renderNovelDetailTags(novel.tags);
 
@@ -997,6 +1143,8 @@ function renderNovelDetail(novel) {
     document.getElementById('btn-open-character-library').onclick = () => openCharacterLibraryForNovel(novel.id);
     document.getElementById('btn-detail-analyze-characters').onclick = () => analyzeNovelCharactersWithAI(novel.id);
     document.getElementById('btn-detail-analyze-settings').onclick = () => analyzeNovelSettingsWithAI(novel.id);
+    document.getElementById('btn-detail-analyze-writing-style').onclick = () => analyzeNovelWritingStyleWithAI(novel.id);
+    document.getElementById('btn-copy-writing-style-prompt').onclick = copyNovelWritingStylePrompt;
     document.querySelectorAll('.novel-detail-tab').forEach(tab => {
         tab.onclick = () => switchNovelDetailTab(tab.dataset.detailTab);
     });
@@ -1052,6 +1200,7 @@ async function openNovelDetail(novelId) {
         openModal('novel-detail-modal');
         loadNovelDetailFileInfo(novelId);
         loadNovelSettingAnalysis(novelId);
+        loadNovelWritingStyleAnalysis(novelId);
         loadNovelCharacterAnalysis(novelId);
         return;
     }
@@ -1067,6 +1216,7 @@ async function openNovelDetail(novelId) {
         openModal('novel-detail-modal');
         loadNovelDetailFileInfo(novelId);
         loadNovelSettingAnalysis(novelId);
+        loadNovelWritingStyleAnalysis(novelId);
         loadNovelCharacterAnalysis(novelId);
     } catch (err) {
         console.error('加载小说详情失败:', err);

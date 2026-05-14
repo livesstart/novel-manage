@@ -529,6 +529,175 @@
     text-align: center;
 }
 
+.novel-writing-style-panel {
+    margin-top: 0;
+    padding: 16px;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius);
+    background: #ffffff;
+}
+
+.novel-writing-style-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 14px;
+    margin-bottom: 14px;
+}
+
+.novel-writing-style-head h4 {
+    margin: 0 0 6px;
+    font-size: 15px;
+}
+
+.novel-writing-style-head p {
+    margin: 0;
+    color: var(--text-secondary);
+    font-size: 13px;
+}
+
+.novel-writing-style-head p.completed {
+    color: #047857;
+}
+
+.novel-writing-style-head p.failed {
+    color: #b91c1c;
+}
+
+.novel-writing-style-summary-card {
+    display: flex;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 14px;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius);
+    background: #f8fafc;
+}
+
+.novel-writing-style-summary-card span,
+.novel-writing-style-card span {
+    display: block;
+    margin-bottom: 6px;
+    color: var(--text-secondary);
+    font-size: 12px;
+    font-weight: 700;
+}
+
+.novel-writing-style-summary-card p,
+.novel-writing-style-card p,
+.novel-writing-style-item p,
+.novel-writing-style-guide {
+    margin: 0;
+    color: var(--text-primary);
+    font-size: 13px;
+    line-height: 1.65;
+}
+
+.novel-writing-style-summary-card strong {
+    flex: 0 0 auto;
+    color: #047857;
+    font-size: 12px;
+    white-space: nowrap;
+}
+
+.novel-writing-style-section {
+    margin-top: 16px;
+}
+
+.novel-writing-style-section h5,
+.novel-writing-style-prompt-head h5 {
+    margin: 0 0 10px;
+    color: var(--text-primary);
+    font-size: 14px;
+}
+
+.novel-writing-style-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+}
+
+.novel-writing-style-card,
+.novel-writing-style-item {
+    min-width: 0;
+    padding: 13px;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius);
+    background: #f8fafc;
+}
+
+.novel-writing-style-items {
+    display: grid;
+    gap: 10px;
+}
+
+.novel-writing-style-item-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    margin-bottom: 8px;
+}
+
+.novel-writing-style-item-head strong {
+    color: var(--text-primary);
+    font-size: 14px;
+}
+
+.novel-writing-style-item-head span {
+    flex: 0 0 auto;
+    color: var(--text-secondary);
+    font-size: 12px;
+}
+
+.novel-writing-style-evidence {
+    margin-top: 10px;
+    padding: 9px 10px;
+    border-left: 3px solid #14b8a6;
+    background: #f0fdfa;
+    color: var(--text-secondary);
+    font-size: 13px;
+    line-height: 1.6;
+}
+
+.novel-writing-style-guide {
+    padding: 13px;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius);
+    background: #f8fafc;
+}
+
+.novel-writing-style-prompt-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.novel-writing-style-prompt {
+    margin: 0;
+    padding: 13px;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius);
+    background: #0f172a;
+    color: #e2e8f0;
+    font-family: Consolas, Monaco, 'Courier New', monospace;
+    font-size: 12px;
+    line-height: 1.65;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
+
+.novel-writing-style-empty {
+    grid-column: 1 / -1;
+    padding: 16px;
+    border: 1px dashed var(--border-color);
+    border-radius: var(--radius);
+    color: var(--text-secondary);
+    text-align: center;
+    background: #ffffff;
+}
+
 .novel-character-panel {
     margin-top: 0;
     padding: 16px;
@@ -876,11 +1045,14 @@
 
     .novel-detail-metrics,
     .novel-detail-file-grid,
-    .novel-setting-list {
+    .novel-setting-list,
+    .novel-writing-style-grid {
         grid-template-columns: 1fr 1fr;
     }
 
-    .novel-setting-head {
+    .novel-setting-head,
+    .novel-writing-style-head,
+    .novel-writing-style-summary-card {
         flex-direction: column;
     }
 
