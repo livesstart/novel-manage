@@ -1423,6 +1423,9 @@
                     <button class="btn-icon" id="reader-search-toggle" title="搜索本章" aria-expanded="false">
                         <i class="fas fa-search"></i>
                     </button>
+                    <button class="btn-icon" id="reader-ai-toggle" title="AI 助手" aria-expanded="false">
+                        <i class="fas fa-robot"></i>
+                    </button>
                     <button class="btn-icon" id="reader-settings-toggle" title="阅读设置" aria-expanded="false">
                         <i class="fas fa-sliders-h"></i>
                     </button>
@@ -1525,6 +1528,33 @@
                         </button>
                     </div>
                 </div>
+                <aside class="reader-ai-panel hidden" id="reader-ai-panel" aria-label="AI 助手">
+                    <div class="reader-ai-header">
+                        <div>
+                            <span class="reader-ai-kicker">AI 助手</span>
+                            <strong>当前小说上下文</strong>
+                        </div>
+                        <button class="btn-icon" id="reader-ai-close" title="关闭 AI 助手">
+                            <i class="fas fa-times"></i>
+                        </button>
+                    </div>
+                    <div class="reader-ai-status" id="reader-ai-status">打开后将以当前小说为上下文回答</div>
+                    <div class="reader-ai-messages" id="reader-ai-messages"></div>
+                    <div class="reader-ai-error hidden" id="reader-ai-error"></div>
+                    <div class="reader-ai-compose">
+                        <textarea id="reader-ai-input" rows="3" aria-label="向 AI 询问这本小说" autocomplete="off"></textarea>
+                        <div class="reader-ai-actions">
+                            <button class="btn btn-secondary" id="reader-ai-clear" type="button">
+                                <i class="fas fa-eraser"></i>
+                                清空
+                            </button>
+                            <button class="btn btn-primary" id="reader-ai-send" type="button">
+                                <i class="fas fa-paper-plane"></i>
+                                发送
+                            </button>
+                        </div>
+                    </div>
+                </aside>
             </div>
         </div>
     </div>

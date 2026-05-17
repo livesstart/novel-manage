@@ -27,7 +27,13 @@ const readerState = {
     isRestoringProgress: false,
     isSettingsOpen: false,
     isTocOpen: true,
-    isImmersive: false
+    isImmersive: false,
+    isAssistantOpen: false,
+    assistantMessages: [],
+    assistantSending: false,
+    assistantContext: null,
+    assistantError: '',
+    assistantRequestId: 0
 };
 
 function clampReaderNumber(value, min, max, fallback) {
@@ -334,6 +340,7 @@ function openReaderSearchPanel() {
     const panel = document.getElementById('reader-search-panel');
     readerState.isSearchOpen = true;
     closeReaderSettingsPanel();
+    closeReaderAssistantPanel();
     if (panel) panel.classList.remove('hidden');
     syncReaderSearchControls();
     document.getElementById('reader-search-input')?.focus();
@@ -364,6 +371,7 @@ async function openReader(novelId) {
     readerState.isSearchOpen = false;
     readerState.settings = loadReaderSettings();
     readerState.isImmersive = false;
+    resetReaderAssistantState();
     if (readerState.progressSaveTimer) {
         clearTimeout(readerState.progressSaveTimer);
         readerState.progressSaveTimer = null;
@@ -636,6 +644,7 @@ function toggleReaderSettingsPanel() {
 
     if (readerState.isSettingsOpen) {
         closeReaderSearchPanel();
+        closeReaderAssistantPanel();
     }
 
     panel.classList.toggle('hidden', !readerState.isSettingsOpen);
@@ -681,6 +690,152 @@ function syncReaderResponsiveState() {
     setReaderTocOpen(!isReaderCompactViewport());
 }
 
+function formatReaderAssistantContextStatus(context) {
+    if (!context) return '打开后将以当前小说为上下文回答';
+    if (context.is_full_text) {
+        return `已使用完整小说上下文（${context.included_chars || 0} 字）`;
+    }
+    return `小说较长，已使用全书抽样上下文（${context.segment_count || 0} 段 / ${context.included_chars || 0} 字）`;
+}
+
+function resetReaderAssistantState() {
+    readerState.assistantRequestId += 1;
+    readerState.isAssistantOpen = false;
+    readerState.assistantMessages = [];
+    readerState.assistantSending = false;
+    readerState.assistantContext = null;
+    readerState.assistantError = '';
+    renderReaderAssistantPanel();
+}
+
+function renderReaderAssistantMessages() {
+    const container = document.getElementById('reader-ai-messages');
+    if (!container) return;
+
+    if (!readerState.assistantMessages.length) {
+        container.innerHTML = '<div class="reader-ai-empty">可以询问剧情、人物动机、设定或当前章节疑问。</div>';
+        return;
+    }
+
+    container.innerHTML = readerState.assistantMessages.map(message => `
+        <div class="reader-ai-message ${message.role}">
+            <div class="reader-ai-message-role">${message.role === 'user' ? '你' : 'AI'}</div>
+            <div class="reader-ai-message-content">${escapeHtml(message.content)}</div>
+        </div>
+    `).join('');
+    container.scrollTop = container.scrollHeight;
+}
+
+function renderReaderAssistantPanel() {
+    const panel = document.getElementById('reader-ai-panel');
+    const toggle = document.getElementById('reader-ai-toggle');
+    const status = document.getElementById('reader-ai-status');
+    const error = document.getElementById('reader-ai-error');
+    const send = document.getElementById('reader-ai-send');
+    const input = document.getElementById('reader-ai-input');
+
+    if (panel) panel.classList.toggle('hidden', !readerState.isAssistantOpen);
+    if (toggle) toggle.setAttribute('aria-expanded', String(readerState.isAssistantOpen));
+    if (status) status.textContent = formatReaderAssistantContextStatus(readerState.assistantContext);
+    if (send) send.disabled = readerState.assistantSending;
+    if (input) input.disabled = readerState.assistantSending;
+
+    if (error) {
+        error.textContent = readerState.assistantError;
+        error.classList.toggle('hidden', !readerState.assistantError);
+    }
+
+    renderReaderAssistantMessages();
+}
+
+function openReaderAssistantPanel() {
+    closeReaderSearchPanel();
+    closeReaderSettingsPanel();
+    readerState.isAssistantOpen = true;
+    renderReaderAssistantPanel();
+    document.getElementById('reader-ai-input')?.focus();
+}
+
+function closeReaderAssistantPanel() {
+    readerState.isAssistantOpen = false;
+    renderReaderAssistantPanel();
+}
+
+function toggleReaderAssistantPanel() {
+    if (readerState.isAssistantOpen) {
+        closeReaderAssistantPanel();
+    } else {
+        openReaderAssistantPanel();
+    }
+}
+
+function clearReaderAssistantMessages() {
+    readerState.assistantMessages = [];
+    readerState.assistantError = '';
+    renderReaderAssistantPanel();
+    document.getElementById('reader-ai-input')?.focus();
+}
+
+function buildReaderAssistantConversationPayload() {
+    return readerState.assistantMessages
+        .filter(message => ['user', 'assistant'].includes(message.role))
+        .slice(-6)
+        .map(message => ({
+            role: message.role,
+            content: message.content
+        }));
+}
+
+function isCurrentReaderAssistantRequest(requestNovelId, requestId) {
+    return readerState.novelId === requestNovelId && readerState.assistantRequestId === requestId;
+}
+
+async function sendReaderAssistantQuestion() {
+    const input = document.getElementById('reader-ai-input');
+    const question = (input?.value || '').trim();
+    if (!question || readerState.assistantSending || !readerState.novelId) return;
+
+    const requestNovelId = readerState.novelId;
+    const requestChapter = readerState.currentChapter;
+    const requestId = readerState.assistantRequestId + 1;
+    readerState.assistantRequestId = requestId;
+    const conversation = buildReaderAssistantConversationPayload();
+    readerState.assistantMessages.push({ role: 'user', content: question });
+    readerState.assistantSending = true;
+    readerState.assistantError = '';
+    if (input) input.value = '';
+    renderReaderAssistantPanel();
+
+    try {
+        const res = await api.post(`/api/ai/novels/${requestNovelId}/reader-assistant`, {
+            question,
+            chapter_index: requestChapter,
+            chapter_title: document.getElementById('reader-chapter-title')?.textContent || '',
+            conversation
+        });
+
+        if (!isCurrentReaderAssistantRequest(requestNovelId, requestId)) return;
+
+        if (res.success) {
+            readerState.assistantContext = res.data.context || null;
+            readerState.assistantMessages.push({
+                role: 'assistant',
+                content: res.data.answer || 'AI 未返回内容'
+            });
+        } else {
+            readerState.assistantError = res.message || 'AI 助手请求失败';
+        }
+    } catch (err) {
+        if (!isCurrentReaderAssistantRequest(requestNovelId, requestId)) return;
+        readerState.assistantError = err.message || 'AI 助手请求失败';
+    } finally {
+        if (!isCurrentReaderAssistantRequest(requestNovelId, requestId)) return;
+        readerState.assistantSending = false;
+        renderReaderAssistantPanel();
+        document.getElementById('reader-ai-input')?.focus();
+    }
+}
+
 function setReaderImmersiveMode(enabled) {
     const modal = document.getElementById('reader-modal');
     const button = document.getElementById('reader-immersive-toggle');
@@ -696,6 +851,7 @@ function setReaderImmersiveMode(enabled) {
     if (readerState.isImmersive) {
         closeReaderSearchPanel();
         closeReaderSettingsPanel();
+        closeReaderAssistantPanel();
     }
 }
 

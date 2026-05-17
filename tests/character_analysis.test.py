@@ -12,6 +12,9 @@ import ai_routes
 import app as novel_app
 
 
+LATE_CONTEXT_MARKER = 'CHARACTER_LATE_CONTEXT_MARKER_AFTER_12000'
+
+
 class FakeAIClient:
     def __init__(self):
         self.messages = None
@@ -81,6 +84,12 @@ class CharacterAnalysisTest(unittest.TestCase):
             '第一章 星河钥匙\n林舟第一次发现星河钥匙。\n第二章 同行\n沈秋提出另一种推理方向，林舟和沈秋决定一起行动。\n',
             encoding='utf-8'
         )
+        self.book_path.write_text(
+            self.book_path.read_text(encoding='utf-8')
+            + ('front-only filler line for context migration.\n' * 420)
+            + f'\n{LATE_CONTEXT_MARKER}\n',
+            encoding='utf-8'
+        )
 
         conn = sqlite3.connect(novel_app.DATABASE)
         cursor = conn.cursor()
@@ -121,7 +130,8 @@ class CharacterAnalysisTest(unittest.TestCase):
         self.assertEqual(data['characters'][0]['profile']['first_seen'], '第一章 星河钥匙')
         self.assertEqual(data['relations'][0]['source_name'], '林舟')
         self.assertEqual(data['relations'][0]['target_name'], '沈秋')
-        self.assertIn('正文片段', self.fake_client.messages[1]['content'])
+        self.assertIn('Novel content context', self.fake_client.messages[1]['content'])
+        self.assertIn(LATE_CONTEXT_MARKER, self.fake_client.messages[1]['content'])
 
         read_response = self.client.get(f'/api/novels/{self.novel_id}/characters')
         read_payload = read_response.get_json()

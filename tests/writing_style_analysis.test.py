@@ -12,6 +12,9 @@ import ai_routes
 import app as novel_app
 
 
+LATE_CONTEXT_MARKER = 'WRITING_STYLE_LATE_CONTEXT_MARKER_AFTER_12000'
+
+
 class FakeWritingStyleAIClient:
     def __init__(self):
         self.messages = None
@@ -65,6 +68,12 @@ class WritingStyleAnalysisTest(unittest.TestCase):
             '沈秋压低声音问，既然门从未出现，钥匙为什么要醒来？\n',
             encoding='utf-8'
         )
+        self.book_path.write_text(
+            self.book_path.read_text(encoding='utf-8')
+            + ('front-only filler line for context migration.\n' * 420)
+            + f'\n{LATE_CONTEXT_MARKER}\n',
+            encoding='utf-8'
+        )
 
         conn = sqlite3.connect(novel_app.DATABASE)
         cursor = conn.cursor()
@@ -100,7 +109,8 @@ class WritingStyleAnalysisTest(unittest.TestCase):
         self.assertEqual(data['examples'][0]['label'], '线索片段')
         self.assertEqual(data['style_prompt'], '请用冷静克制的悬疑叙事续写：第三人称有限视角，短句，重视物件和动作细节。')
         self.assertEqual(data['confidence'], 0.89)
-        self.assertIn('正文片段', self.fake_client.messages[1]['content'])
+        self.assertIn('Novel content context', self.fake_client.messages[1]['content'])
+        self.assertIn(LATE_CONTEXT_MARKER, self.fake_client.messages[1]['content'])
 
         read_response = self.client.get(f'/api/novels/{self.novel_id}/writing-style')
         read_payload = read_response.get_json()

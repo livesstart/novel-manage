@@ -78,6 +78,16 @@ function switchView(viewName) {
     }
 }
 
+function isReaderEditableShortcutTarget(target) {
+    if (!target) return false;
+    const tagName = target.tagName;
+    return (
+        ['INPUT', 'TEXTAREA', 'SELECT', 'BUTTON'].includes(tagName)
+        || target.isContentEditable
+        || target.contentEditable === 'true'
+    );
+}
+
 function bindEvents() {
     // 导航切换
     document.querySelectorAll('.nav-item').forEach(item => {
@@ -386,6 +396,16 @@ function bindEvents() {
     document.getElementById('reader-search-prev').addEventListener('click', () => moveReaderSearchResult(-1));
     document.getElementById('reader-search-next').addEventListener('click', () => moveReaderSearchResult(1));
     document.getElementById('reader-search-clear').addEventListener('click', clearReaderSearch);
+    document.getElementById('reader-ai-toggle').addEventListener('click', toggleReaderAssistantPanel);
+    document.getElementById('reader-ai-send').addEventListener('click', sendReaderAssistantQuestion);
+    document.getElementById('reader-ai-clear').addEventListener('click', clearReaderAssistantMessages);
+    document.getElementById('reader-ai-close').addEventListener('click', closeReaderAssistantPanel);
+    document.getElementById('reader-ai-input').addEventListener('keydown', (e) => {
+        if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+            e.preventDefault();
+            sendReaderAssistantQuestion();
+        }
+    });
     document.getElementById('reader-settings-toggle').addEventListener('click', toggleReaderSettingsPanel);
     document.getElementById('reader-immersive-toggle').addEventListener('click', toggleReaderImmersiveMode);
     document.getElementById('reader-immersive-exit').addEventListener('click', () => setReaderImmersiveMode(false));
@@ -396,19 +416,13 @@ function bindEvents() {
         // 只在阅读器打开时生效
         if (!document.getElementById('reader-modal').classList.contains('active')) return;
 
-        if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'f') {
-            e.preventDefault();
-            openReaderSearchPanel();
-            return;
-        }
-
         if (e.key === 'Escape') {
             if (readerState.isImmersive) {
                 setReaderImmersiveMode(false);
                 return;
             }
 
-            if (!['INPUT', 'TEXTAREA', 'SELECT', 'BUTTON'].includes(e.target.tagName)) {
+            if (!isReaderEditableShortcutTarget(e.target)) {
                 saveReadingProgressNow();
                 closeModal('reader-modal');
             }
@@ -416,6 +430,13 @@ function bindEvents() {
         }
 
         if (['INPUT', 'TEXTAREA', 'SELECT', 'BUTTON'].includes(e.target.tagName)) return;
+        if (isReaderEditableShortcutTarget(e.target)) return;
+
+        if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'f') {
+            e.preventDefault();
+            openReaderSearchPanel();
+            return;
+        }
 
         switch(e.key) {
             case 'ArrowLeft':

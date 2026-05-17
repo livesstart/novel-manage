@@ -12,6 +12,9 @@ import ai_routes
 import app as novel_app
 
 
+LATE_CONTEXT_MARKER = 'SETTING_LATE_CONTEXT_MARKER_AFTER_12000'
+
+
 class FakeSettingAIClient:
     def __init__(self):
         self.messages = None
@@ -56,6 +59,12 @@ class NovelSettingAnalysisTest(unittest.TestCase):
             '第二章 守望会\n沈秋提到旧城守望会一直守着遗迹入口。\n',
             encoding='utf-8'
         )
+        self.book_path.write_text(
+            self.book_path.read_text(encoding='utf-8')
+            + ('front-only filler line for context migration.\n' * 420)
+            + f'\n{LATE_CONTEXT_MARKER}\n',
+            encoding='utf-8'
+        )
 
         conn = sqlite3.connect(novel_app.DATABASE)
         cursor = conn.cursor()
@@ -89,7 +98,8 @@ class NovelSettingAnalysisTest(unittest.TestCase):
         self.assertEqual(data['settings'][0]['name'], '星河钥匙')
         self.assertEqual(data['settings'][0]['summary'], '能开启遗迹入口的核心设定。')
         self.assertEqual(data['settings'][0]['confidence'], 0.91)
-        self.assertIn('正文片段', self.fake_client.messages[1]['content'])
+        self.assertIn('Novel content context', self.fake_client.messages[1]['content'])
+        self.assertIn(LATE_CONTEXT_MARKER, self.fake_client.messages[1]['content'])
 
         read_response = self.client.get(f'/api/novels/{self.novel_id}/settings')
         read_payload = read_response.get_json()

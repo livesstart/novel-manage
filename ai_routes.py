@@ -13,6 +13,11 @@ from ai_client import (
     get_native_gemini_client,
     is_gemini_compatible_config,
 )
+from ai_context import (
+    DEFAULT_AI_CONTEXT_CHAR_BUDGET,
+    build_novel_ai_context,
+    summarize_novel_ai_context,
+)
 
 
 def ensure_character_analysis_schema(cursor):
@@ -243,6 +248,76 @@ def register_ai_routes(app, *, get_db, resolve_novel_file_path, is_text_readable
             return ''
 
 
+    def build_ai_context_for_novel(novel, *, focus_chapter_index=None, char_budget=DEFAULT_AI_CONTEXT_CHAR_BUDGET):
+        return build_novel_ai_context(
+            novel,
+            resolve_novel_file_path=resolve_novel_file_path,
+            is_text_readable_file=is_text_readable_file,
+            char_budget=char_budget,
+            focus_chapter_index=focus_chapter_index,
+        )
+
+
+    def has_usable_novel_ai_context(novel, novel_context):
+        return bool(
+            novel.get('title')
+            or novel.get('description')
+            or novel_context.get('content_text')
+        )
+
+
+    READER_ASSISTANT_QUESTION_MAX_CHARS = 2000
+    READER_ASSISTANT_HISTORY_MAX_MESSAGES = 6
+    READER_ASSISTANT_HISTORY_MAX_CHARS = 1200
+
+
+    def normalize_reader_assistant_question(value):
+        return re.sub(r'\s+', ' ', str(value or '')).strip()[:READER_ASSISTANT_QUESTION_MAX_CHARS]
+
+
+    def normalize_reader_assistant_history(items):
+        normalized = []
+        for item in items or []:
+            if not isinstance(item, dict):
+                continue
+            role = item.get('role')
+            if role not in {'user', 'assistant'}:
+                continue
+            content = re.sub(r'\s+', ' ', str(item.get('content') or '')).strip()
+            if not content:
+                continue
+            normalized.append({'role': role, 'content': content[:READER_ASSISTANT_HISTORY_MAX_CHARS]})
+        return normalized[-READER_ASSISTANT_HISTORY_MAX_MESSAGES:]
+
+
+    def build_reader_assistant_messages(novel_context, *, question, chapter_index=None, chapter_title='', conversation=None):
+        messages = [
+            {
+                'role': 'system',
+                'content': (
+                    '你是阅读器内的小说 AI 助手。只根据当前提供的小说上下文回答。'
+                    '如果上下文无法确认答案，请直接说明无法确认，不要编造剧情、人物关系或结局。'
+                ),
+            },
+            {
+                'role': 'user',
+                'content': novel_context.get('context_text') or 'Novel content context: Not available.',
+            },
+        ]
+        messages.extend(normalize_reader_assistant_history(conversation))
+
+        chapter_line = ''
+        if chapter_index is not None or chapter_title:
+            chapter_label = chapter_title or f'Chapter {chapter_index + 1}'
+            chapter_line = f'Current chapter: {chapter_label}\n'
+
+        messages.append({
+            'role': 'user',
+            'content': f"{chapter_line}Question: {question}",
+        })
+        return messages
+
+
     def extract_json_object(text):
         """从 AI 文本响应中提取 JSON 对象。"""
         cleaned = (text or '').strip()
@@ -420,14 +495,14 @@ def register_ai_routes(app, *, get_db, resolve_novel_file_path, is_text_readable
         return characters, relations
 
 
-    def build_character_analysis_messages(novel, content_excerpt):
+    def build_character_analysis_messages(novel, novel_context):
+        context_text = novel_context.get('context_text') or 'Novel content context: Not available.'
         context_blocks = [
             f'标题：{novel.get("title") or "未提供"}',
             f'作者：{novel.get("author") or "未提供"}',
             f'简介：{novel.get("description") or "无"}',
+            context_text,
         ]
-        if content_excerpt:
-            context_blocks.append(f'正文片段：\n{content_excerpt[:12000]}')
 
         user_prompt = '\n\n'.join(context_blocks) + textwrap.dedent("""
 
@@ -514,14 +589,14 @@ def register_ai_routes(app, *, get_db, resolve_novel_file_path, is_text_readable
         return settings
 
 
-    def build_setting_analysis_messages(novel, content_excerpt):
+    def build_setting_analysis_messages(novel, novel_context):
+        context_text = novel_context.get('context_text') or 'Novel content context: Not available.'
         context_blocks = [
             f'标题：{novel.get("title") or "未提供"}',
             f'作者：{novel.get("author") or "未提供"}',
             f'简介：{novel.get("description") or "无"}',
+            context_text,
         ]
-        if content_excerpt:
-            context_blocks.append(f'正文片段：\n{content_excerpt[:12000]}')
 
         user_prompt = '\n\n'.join(context_blocks) + textwrap.dedent("""
 
@@ -663,14 +738,14 @@ def register_ai_routes(app, *, get_db, resolve_novel_file_path, is_text_readable
         return any(style.get(field) for field in text_fields) or bool(style.get('signature_techniques')) or bool(style.get('examples'))
 
 
-    def build_writing_style_analysis_messages(novel, content_excerpt):
+    def build_writing_style_analysis_messages(novel, novel_context):
+        context_text = novel_context.get('context_text') or 'Novel content context: Not available.'
         context_blocks = [
             f'标题：{novel.get("title") or "未提供"}',
             f'作者：{novel.get("author") or "未提供"}',
             f'简介：{novel.get("description") or "无"}',
+            context_text,
         ]
-        if content_excerpt:
-            context_blocks.append(f'正文片段：\n{content_excerpt[:12000]}')
 
         user_prompt = '\n\n'.join(context_blocks) + textwrap.dedent("""
 
@@ -1568,6 +1643,53 @@ def register_ai_routes(app, *, get_db, resolve_novel_file_path, is_text_readable
             return jsonify({'success': False, 'message': str(e)}), 500
 
 
+    @app.route('/api/ai/novels/<int:novel_id>/reader-assistant', methods=['POST'])
+    def reader_assistant_chat(novel_id):
+        data = request.get_json(silent=True)
+        if data is None:
+            data = {}
+        if not isinstance(data, dict):
+            return jsonify({'success': False, 'message': '请求内容必须是 JSON 对象'}), 400
+
+        question = normalize_reader_assistant_question(data.get('question'))
+        if not question:
+            return jsonify({'success': False, 'message': '问题不能为空'}), 400
+
+        novel = get_novel_detail_record(novel_id)
+        if not novel:
+            return jsonify({'success': False, 'message': '小说不存在'}), 404
+
+        client = get_ai_client()
+        if not client:
+            return jsonify({'success': False, 'message': '请先在 AI 配置中激活可用模型'}), 400
+
+        try:
+            chapter_index = data.get('chapter_index')
+            chapter_index = int(chapter_index) if chapter_index is not None else None
+        except (TypeError, ValueError):
+            chapter_index = None
+
+        try:
+            novel_context = build_ai_context_for_novel(novel, focus_chapter_index=chapter_index)
+            messages = build_reader_assistant_messages(
+                novel_context,
+                question=question,
+                chapter_index=chapter_index,
+                chapter_title=str(data.get('chapter_title') or '').strip(),
+                conversation=data.get('conversation') if isinstance(data.get('conversation'), list) else [],
+            )
+            answer = client.chat(messages, stream=False)
+            return jsonify({
+                'success': True,
+                'data': {
+                    'answer': answer,
+                    'context': summarize_novel_ai_context(novel_context),
+                },
+            })
+        except Exception as e:
+            return jsonify({'success': False, 'message': str(e)}), 500
+
+
     @app.route('/api/novels/<int:novel_id>/characters', methods=['GET'])
     def get_novel_character_analysis(novel_id):
         """获取单本小说的角色和关系分析结果。"""
@@ -1614,9 +1736,9 @@ def register_ai_routes(app, *, get_db, resolve_novel_file_path, is_text_readable
         if not novel:
             return jsonify({'success': False, 'message': '小说不存在'}), 404
 
-        content_excerpt = extract_text_excerpt(novel.get('file_path'), max_chars=12000)
-        if not novel.get('title') and not novel.get('description') and not content_excerpt:
-            return jsonify({'success': False, 'message': '请先填写书名，或提供可读取的 TXT 文件'}), 400
+        novel_context = build_ai_context_for_novel(novel)
+        if not has_usable_novel_ai_context(novel, novel_context):
+            return jsonify({'success': False, 'message': '请先填写书名，或提供可读取的 TXT/EPUB 文件'}), 400
 
         client = get_ai_client()
         if not client:
@@ -1624,7 +1746,7 @@ def register_ai_routes(app, *, get_db, resolve_novel_file_path, is_text_readable
 
         active_config = AIConfig.get_active_config() or {}
         model = active_config.get('model') or ''
-        messages = build_character_analysis_messages(novel, content_excerpt)
+        messages = build_character_analysis_messages(novel, novel_context)
 
         try:
             response_text = client.chat(messages, stream=False)
@@ -1632,16 +1754,24 @@ def register_ai_routes(app, *, get_db, resolve_novel_file_path, is_text_readable
             characters, relations = normalize_character_analysis_payload(response_data)
 
             if not characters:
-                return jsonify({'success': False, 'message': 'AI 未识别到可用角色卡，请换更多正文内容后重试'}), 500
+                error_message = 'AI 未识别到可用角色卡，请换更多正文内容后重试'
+                mark_character_analysis_failed(
+                    novel_id,
+                    error_message,
+                    model=model,
+                    source_excerpt_chars=novel_context['included_chars']
+                )
+                return jsonify({'success': False, 'message': error_message}), 500
 
             analysis = replace_character_analysis(
                 novel_id,
                 characters,
                 relations,
                 model=model,
-                source_excerpt_chars=len(content_excerpt)
+                source_excerpt_chars=novel_context['included_chars']
             )
-            analysis['used_excerpt'] = bool(content_excerpt)
+            analysis['used_excerpt'] = bool(novel_context.get('content_text'))
+            analysis['context'] = summarize_novel_ai_context(novel_context)
             return jsonify({'success': True, 'data': analysis})
         except (ValueError, RuntimeError) as e:
             error_message = str(e)
@@ -1649,7 +1779,7 @@ def register_ai_routes(app, *, get_db, resolve_novel_file_path, is_text_readable
                 novel_id,
                 error_message,
                 model=model,
-                source_excerpt_chars=len(content_excerpt)
+                source_excerpt_chars=novel_context['included_chars']
             )
             return jsonify({'success': False, 'message': error_message}), 422
         except Exception as e:
@@ -1658,7 +1788,7 @@ def register_ai_routes(app, *, get_db, resolve_novel_file_path, is_text_readable
                 novel_id,
                 error_message,
                 model=model,
-                source_excerpt_chars=len(content_excerpt)
+                source_excerpt_chars=novel_context['included_chars']
             )
             return jsonify({'success': False, 'message': error_message}), 500
 
@@ -1670,9 +1800,9 @@ def register_ai_routes(app, *, get_db, resolve_novel_file_path, is_text_readable
         if not novel:
             return jsonify({'success': False, 'message': '小说不存在'}), 404
 
-        content_excerpt = extract_text_excerpt(novel.get('file_path'), max_chars=12000)
-        if not novel.get('title') and not novel.get('description') and not content_excerpt:
-            return jsonify({'success': False, 'message': '请先填写书名，或提供可读取的 TXT 文件'}), 400
+        novel_context = build_ai_context_for_novel(novel)
+        if not has_usable_novel_ai_context(novel, novel_context):
+            return jsonify({'success': False, 'message': '请先填写书名，或提供可读取的 TXT/EPUB 文件'}), 400
 
         client = get_ai_client()
         if not client:
@@ -1680,7 +1810,7 @@ def register_ai_routes(app, *, get_db, resolve_novel_file_path, is_text_readable
 
         active_config = AIConfig.get_active_config() or {}
         model = active_config.get('model') or ''
-        messages = build_setting_analysis_messages(novel, content_excerpt)
+        messages = build_setting_analysis_messages(novel, novel_context)
 
         try:
             response_text = client.chat(messages, stream=False)
@@ -1688,15 +1818,23 @@ def register_ai_routes(app, *, get_db, resolve_novel_file_path, is_text_readable
             settings = normalize_setting_analysis_payload(response_data)
 
             if not settings:
-                return jsonify({'success': False, 'message': 'AI 未识别到可用小说设定，请换更多正文内容后重试'}), 500
+                error_message = 'AI 未识别到可用小说设定，请换更多正文内容后重试'
+                mark_setting_analysis_failed(
+                    novel_id,
+                    error_message,
+                    model=model,
+                    source_excerpt_chars=novel_context['included_chars']
+                )
+                return jsonify({'success': False, 'message': error_message}), 500
 
             analysis = replace_setting_analysis(
                 novel_id,
                 settings,
                 model=model,
-                source_excerpt_chars=len(content_excerpt)
+                source_excerpt_chars=novel_context['included_chars']
             )
-            analysis['used_excerpt'] = bool(content_excerpt)
+            analysis['used_excerpt'] = bool(novel_context.get('content_text'))
+            analysis['context'] = summarize_novel_ai_context(novel_context)
             return jsonify({'success': True, 'data': analysis})
         except (ValueError, RuntimeError) as e:
             error_message = str(e)
@@ -1704,7 +1842,7 @@ def register_ai_routes(app, *, get_db, resolve_novel_file_path, is_text_readable
                 novel_id,
                 error_message,
                 model=model,
-                source_excerpt_chars=len(content_excerpt)
+                source_excerpt_chars=novel_context['included_chars']
             )
             return jsonify({'success': False, 'message': error_message}), 422
         except Exception as e:
@@ -1713,7 +1851,7 @@ def register_ai_routes(app, *, get_db, resolve_novel_file_path, is_text_readable
                 novel_id,
                 error_message,
                 model=model,
-                source_excerpt_chars=len(content_excerpt)
+                source_excerpt_chars=novel_context['included_chars']
             )
             return jsonify({'success': False, 'message': error_message}), 500
 
@@ -1725,9 +1863,9 @@ def register_ai_routes(app, *, get_db, resolve_novel_file_path, is_text_readable
         if not novel:
             return jsonify({'success': False, 'message': '小说不存在'}), 404
 
-        content_excerpt = extract_text_excerpt(novel.get('file_path'), max_chars=12000)
-        if not novel.get('title') and not novel.get('description') and not content_excerpt:
-            return jsonify({'success': False, 'message': '请先填写书名，或提供可读取的 TXT 文件'}), 400
+        novel_context = build_ai_context_for_novel(novel)
+        if not has_usable_novel_ai_context(novel, novel_context):
+            return jsonify({'success': False, 'message': '请先填写书名，或提供可读取的 TXT/EPUB 文件'}), 400
 
         client = get_ai_client()
         if not client:
@@ -1735,7 +1873,7 @@ def register_ai_routes(app, *, get_db, resolve_novel_file_path, is_text_readable
 
         active_config = AIConfig.get_active_config() or {}
         model = active_config.get('model') or ''
-        messages = build_writing_style_analysis_messages(novel, content_excerpt)
+        messages = build_writing_style_analysis_messages(novel, novel_context)
 
         try:
             response_text = client.chat(messages, stream=False)
@@ -1748,7 +1886,7 @@ def register_ai_routes(app, *, get_db, resolve_novel_file_path, is_text_readable
                     novel_id,
                     error_message,
                     model=model,
-                    source_excerpt_chars=len(content_excerpt)
+                    source_excerpt_chars=novel_context['included_chars']
                 )
                 return jsonify({'success': False, 'message': error_message}), 500
 
@@ -1756,9 +1894,10 @@ def register_ai_routes(app, *, get_db, resolve_novel_file_path, is_text_readable
                 novel_id,
                 style,
                 model=model,
-                source_excerpt_chars=len(content_excerpt)
+                source_excerpt_chars=novel_context['included_chars']
             )
-            analysis['used_excerpt'] = bool(content_excerpt)
+            analysis['used_excerpt'] = bool(novel_context.get('content_text'))
+            analysis['context'] = summarize_novel_ai_context(novel_context)
             return jsonify({'success': True, 'data': analysis})
         except (ValueError, RuntimeError) as e:
             error_message = str(e)
@@ -1766,7 +1905,7 @@ def register_ai_routes(app, *, get_db, resolve_novel_file_path, is_text_readable
                 novel_id,
                 error_message,
                 model=model,
-                source_excerpt_chars=len(content_excerpt)
+                source_excerpt_chars=novel_context['included_chars']
             )
             return jsonify({'success': False, 'message': error_message}), 422
         except Exception as e:
@@ -1775,7 +1914,7 @@ def register_ai_routes(app, *, get_db, resolve_novel_file_path, is_text_readable
                 novel_id,
                 error_message,
                 model=model,
-                source_excerpt_chars=len(content_excerpt)
+                source_excerpt_chars=novel_context['included_chars']
             )
             return jsonify({'success': False, 'message': error_message}), 500
 
