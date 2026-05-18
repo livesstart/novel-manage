@@ -3,7 +3,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const root = path.resolve(__dirname, '..');
-const novelsJs = fs.readFileSync(path.join(root, 'static/js/novels.js'), 'utf8');
+const novelsJs = fs.readFileSync(path.join(root, 'static/js/novel-render.js'), 'utf8');
 
 function readImportedCss() {
     const cssDir = path.join(root, 'static/css');

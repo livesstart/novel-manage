@@ -7,6 +7,7 @@ const template = fs.readFileSync(path.join(root, 'templates/index.html'), 'utf8'
 const coreJs = fs.readFileSync(path.join(root, 'static/js/core.js'), 'utf8');
 const adminJs = fs.readFileSync(path.join(root, 'static/js/admin.js'), 'utf8');
 const appJs = fs.readFileSync(path.join(root, 'static/js/app.js'), 'utf8');
+const appBindingsJs = fs.readFileSync(path.join(root, 'static/js/app-bindings.js'), 'utf8');
 const adminCss = fs.readFileSync(path.join(root, 'static/css/admin.css'), 'utf8');
 
 const requiredTemplateIds = [
@@ -47,7 +48,7 @@ assert.match(adminJs, /async function deleteAdminUser/, 'admin.js should delete 
 assert.match(appJs, /const canEnterApp = await initAuthGate\(\)/, 'app init should respect the auth gate');
 assert.match(appJs, /viewName === 'admin'/, 'app view switch should load admin panel');
 assert.match(appJs, /!canManageSystem\(\)/, 'app view switch should reject admin view for regular users');
-assert.match(appJs, /bindAdminEvents\(\)/, 'app should bind admin events');
+assert.match(appBindingsJs, /bindAdminEvents\(\)/, 'app should bind admin events');
 
 assert.match(adminCss, /\.login-screen/, 'login screen should be styled');
 assert.match(adminCss, /\.admin-shell/, 'admin page shell should be styled');

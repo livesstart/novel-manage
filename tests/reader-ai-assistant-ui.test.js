@@ -6,7 +6,7 @@ const vm = require('node:vm');
 const root = path.resolve(__dirname, '..');
 const template = fs.readFileSync(path.join(root, 'templates/index.html'), 'utf8');
 const readerJs = fs.readFileSync(path.join(root, 'static/js/reader.js'), 'utf8');
-const appJs = fs.readFileSync(path.join(root, 'static/js/app.js'), 'utf8');
+const appJs = fs.readFileSync(path.join(root, 'static/js/app-bindings.js'), 'utf8');
 const readerCss = fs.readFileSync(path.join(root, 'static/css/reader.css'), 'utf8');
 
 assert.match(template, /id="reader-ai-toggle"/, 'reader should expose an AI assistant toolbar button');
