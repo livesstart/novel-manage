@@ -2,6 +2,7 @@ import os
 import sys
 import ast
 import io
+import re
 import tokenize
 import unittest
 
@@ -87,6 +88,14 @@ EXPECTED_ROUTES = [
     ('/api/tags/<int:tag_id>', 'PUT'),
 ]
 
+EXPECTED_ROUTE_MODULES = [
+    ('novel_routes.py', 'register_novel_routes'),
+    ('reader_routes.py', 'register_reader_routes'),
+    ('taxonomy_routes.py', 'register_taxonomy_routes'),
+    ('import_routes.py', 'register_import_routes'),
+    ('batch_routes.py', 'register_batch_routes'),
+]
+
 
 class AppStructureTest(unittest.TestCase):
     def test_public_route_map_is_unchanged(self):
@@ -98,17 +107,36 @@ class AppStructureTest(unittest.TestCase):
 
         self.assertEqual(routes, EXPECTED_ROUTES)
 
-    def test_app_py_is_split_into_smaller_modules(self):
+    def test_app_py_is_focused_on_application_composition(self):
         app_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'app.py')
         with open(app_path, 'r', encoding='utf-8') as handle:
-            line_count = sum(1 for _ in handle)
+            source = handle.read()
 
-        self.assertLessEqual(line_count, 1500)
+        line_count = len(source.splitlines())
+        self.assertLessEqual(line_count, 450)
+
+        api_route_decorators = re.findall(r"@app\.route\(\s*['\"]\/api", source)
+        self.assertEqual(api_route_decorators, [])
+
+    def test_backend_route_modules_are_split_by_responsibility(self):
+        project_root = os.path.dirname(os.path.dirname(__file__))
+
+        for relative_path, register_function in EXPECTED_ROUTE_MODULES:
+            path = os.path.join(project_root, relative_path)
+            self.assertTrue(os.path.exists(path), f'{relative_path} should exist')
+            with open(path, 'r', encoding='utf-8') as handle:
+                source = handle.read()
+            self.assertIn(f'def {register_function}(', source)
 
     def test_python_comments_and_docstrings_are_readable(self):
         project_root = os.path.dirname(os.path.dirname(__file__))
         python_files = [
             'app.py',
+            'batch_routes.py',
+            'import_routes.py',
+            'novel_routes.py',
+            'reader_routes.py',
+            'taxonomy_routes.py',
             'ai_routes.py',
             'admin_routes.py',
             'character_routes.py',
