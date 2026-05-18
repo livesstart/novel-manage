@@ -5,12 +5,16 @@ const path = require('node:path');
 const root = path.resolve(__dirname, '..');
 const frontendJs = [
     'core.js',
+    'novel-render.js',
+    'novel-detail.js',
+    'novel-download.js',
     'novels.js',
     'reader.js',
     'crawler.js',
     'ai.js',
     'batch.js',
     'import.js',
+    'app-bindings.js',
     'app.js',
 ].map(fileName => fs.readFileSync(path.join(root, 'static/js', fileName), 'utf8')).join('\n');
 

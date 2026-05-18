@@ -4,7 +4,7 @@ const path = require('node:path');
 const vm = require('node:vm');
 
 const root = path.resolve(__dirname, '..');
-const novelsJs = fs.readFileSync(path.join(root, 'static/js/novels.js'), 'utf8');
+const novelsJs = fs.readFileSync(path.join(root, 'static/js/novel-download.js'), 'utf8');
 
 const context = {
     console,

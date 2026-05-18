@@ -4,7 +4,10 @@ const path = require('node:path');
 
 const root = path.resolve(__dirname, '..');
 const template = fs.readFileSync(path.join(root, 'templates/index.html'), 'utf8');
-const novelsJs = fs.readFileSync(path.join(root, 'static/js/novels.js'), 'utf8');
+const novelsJs = [
+    'static/js/novel-render.js',
+    'static/js/novel-detail.js',
+].map(relativePath => fs.readFileSync(path.join(root, relativePath), 'utf8')).join('\n');
 const novelsCss = fs.readFileSync(path.join(root, 'static/css/novels.css'), 'utf8');
 
 function readImportedCss() {
